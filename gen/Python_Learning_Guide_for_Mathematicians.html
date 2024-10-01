@@ -1,0 +1,115 @@
+<html><head><title>Python Learning Guide</title></head><body></body><head><title>Python Learning Guide for Mathematicians</title><style id="core-styles"></style><style>
+            #guide-container {
+                max-width: 600px;
+                margin: 0 auto;
+            }
+
+            @media (max-width: 600px) {
+                h2 {
+                    font-size: 18px;
+                }
+
+                div {
+                    font-size: 14px;
+                }
+            }
+        </style></head><body><div id="canvas"><div id="guide-container" style="display: flex; flex-direction: column; padding: 20px;"><div style="margin-bottom: 20px;"><h2 style="background-color: rgb(240, 244, 248); padding: 10px; border-radius: 5px; cursor: pointer; --darkreader-inline-bgcolor: #1e2122;" data-darkreader-inline-bgcolor="">Beginner</h2><div style="display: none; padding: 10px; border-width: medium 1px 1px; border-style: none solid solid; border-color: currentcolor rgb(221, 221, 221) rgb(221, 221, 221); border-image: none; border-radius: 0px 0px 5px 5px; --darkreader-inline-border-top: currentcolor; --darkreader-inline-border-right: #3a3e41; --darkreader-inline-border-bottom: #3a3e41; --darkreader-inline-border-left: #3a3e41;" data-darkreader-inline-border-top="" data-darkreader-inline-border-right="" data-darkreader-inline-border-bottom="" data-darkreader-inline-border-left="">
+        <p>Welcome to Python! Let's start with some basic concepts and coding principles.</p>
+        <h3>Basic Syntax and Operations</h3>
+        <pre><code>
+# Print statement
+print("Hello, World!")
+
+# Basic arithmetic
+print(5 + 3)  # Output: 8
+print(5 - 3)  # Output: 2
+print(5 * 3)  # Output: 15
+print(5 / 3)  # Output: 1.666...
+
+# Variables
+x = 10
+y = 20
+print(x + y)  # Output: 30
+        </code></pre>
+        <h3>Using NumPy for Mathematical Operations</h3>
+        <pre><code>
+import numpy as np
+
+# Creating arrays
+a = np.array([1, 2, 3])
+b = np.array([4, 5, 6])
+
+# Array operations
+print(a + b)  # Output: [5 7 9]
+print(a * b)  # Output: [ 4 10 18]
+        </code></pre>
+    </div></div><div style="margin-bottom: 20px;"><h2 style="background-color: rgb(240, 244, 248); padding: 10px; border-radius: 5px; cursor: pointer; --darkreader-inline-bgcolor: #1e2122;" data-darkreader-inline-bgcolor="">Intermediate</h2><div style="display: none; padding: 10px; border-width: medium 1px 1px; border-style: none solid solid; border-color: currentcolor rgb(221, 221, 221) rgb(221, 221, 221); border-image: none; border-radius: 0px 0px 5px 5px; --darkreader-inline-border-top: currentcolor; --darkreader-inline-border-right: #3a3e41; --darkreader-inline-border-bottom: #3a3e41; --darkreader-inline-border-left: #3a3e41;" data-darkreader-inline-border-top="" data-darkreader-inline-border-right="" data-darkreader-inline-border-bottom="" data-darkreader-inline-border-left="">
+        <p>Dive deeper into Python with more advanced concepts and libraries.</p>
+        <h3>Data Manipulation with pandas</h3>
+        <pre><code>
+import pandas as pd
+
+# Creating a DataFrame
+data = {'Name': ['Alice', 'Bob', 'Charlie'],
+        'Age': [25, 30, 35],
+        'City': ['New York', 'Los Angeles', 'Chicago']}
+df = pd.DataFrame(data)
+
+# DataFrame operations
+print(df)
+print(df.describe())
+print(df[df['Age'] &gt; 30])
+        </code></pre>
+        <h3>Plotting with Matplotlib</h3>
+        <pre><code>
+import matplotlib.pyplot as plt
+
+# Basic plot
+plt.plot([1, 2, 3], [4, 5, 6])
+plt.title('Basic Plot')
+plt.xlabel('X-axis')
+plt.ylabel('Y-axis')
+plt.show()
+        </code></pre>
+    </div></div><div style="margin-bottom: 20px;"><h2 style="background-color: rgb(240, 244, 248); padding: 10px; border-radius: 5px; cursor: pointer; --darkreader-inline-bgcolor: #1e2122;" data-darkreader-inline-bgcolor="">Expert</h2><div style="display: block; padding: 10px; border-width: medium 1px 1px; border-style: none solid solid; border-color: currentcolor rgb(221, 221, 221) rgb(221, 221, 221); border-image: none; border-radius: 0px 0px 5px 5px; --darkreader-inline-border-top: currentcolor; --darkreader-inline-border-right: #3a3e41; --darkreader-inline-border-bottom: #3a3e41; --darkreader-inline-border-left: #3a3e41;" data-darkreader-inline-border-top="" data-darkreader-inline-border-right="" data-darkreader-inline-border-bottom="" data-darkreader-inline-border-left="">
+        <p>Gain expert knowledge with in-depth concepts and extensive library usage.</p>
+        <h3>Advanced Data Analysis with SciPy</h3>
+        <pre><code>
+import scipy.stats as stats
+
+# Normal distribution
+data = np.random.normal(loc=0, scale=1, size=1000)
+mean, std_dev = stats.norm.fit(data)
+
+# Plotting distribution
+plt.hist(data, bins=30, density=True)
+xmin, xmax = plt.xlim()
+x = np.linspace(xmin, xmax, 100)
+p = stats.norm.pdf(x, mean, std_dev)
+plt.plot(x, p, 'k', linewidth=2)
+plt.show()
+        </code></pre>
+        <h3>Machine Learning with scikit-learn</h3>
+        <pre><code>
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+
+# Load dataset
+iris = load_iris()
+X = iris.data
+y = iris.target
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+# Train model
+clf = RandomForestClassifier(n_estimators=100)
+clf.fit(X_train, y_train)
+
+# Make predictions and evaluate
+y_pred = clf.predict(X_test)
+print(accuracy_score(y_test, y_pred))
+        </code></pre>
+    </div></div></div></div><script></script></body></html>
