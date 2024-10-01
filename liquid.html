@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>WebGL Liquid Mixing Simulation</title>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; background: #000; }
+        #menu {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+            font-family: Arial, sans-serif;
+        }
+        #menu input[type="color"], #menu input[type="range"] {
+            margin: 5px 0;
+            width: 100%;
+        }
+        #menu label {
+            display: block;
+            margin: 10px 0 5px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="menu">
+        <label for="colorPicker">Color:</label>
+        <input type="color" id="colorPicker" value="#ff0000">
+
+        <label for="viscositySlider">Viscosity:</label>
+        <input type="range" id="viscositySlider" min="0" max="255" step="1" value="128">
+
+        <label for="volumeSlider">Volume:</label>
+        <input type="range" id="volumeSlider" min="1" max="50" step="1" value="20">
+    </div>
+
+    <script type="module">
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl2');
+        if (!gl) {
+            alert('WebGL2 is not supported by your browser.');
+        }
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Resize handling
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            initSimulationData();
+            updateTexture();
+        });
+
+        // Shader sources
+        const vertexShaderSrc = `#version 300 es
+        in vec2 a_position;
+        out vec2 v_uv;
+        void main() {
+            v_uv = (a_position + 1.0) * 0.5;
+            gl_Position = vec4(a_position, 0, 1);
+        }`;
+
+        const fragmentShaderSrc = `#version 300 es
+        precision highp float;
+        in vec2 v_uv;
+        out vec4 outColor;
+
+        uniform sampler2D u_texture;
+        uniform float u_time;
+
+        void main() {
+            vec2 uv = v_uv;
+            vec4 color = texture(u_texture, uv);
+
+            // Simple time-based turbulence for visual appeal
+            float turbulence = sin(u_time * 5.0 + uv.x * 10.0) * 0.02;
+            color.rgb += turbulence;
+
+            outColor = color;
+        }`;
+
+        // Compile shaders
+        function compileShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compile failed with: ' + gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Create program
+        function createProgram(vsSource, fsSource) {
+            const vertexShader = compileShader(gl.VERTEX_SHADER, vsSource);
+            const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fsSource);
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Program failed to link: ' + gl.getProgramInfoLog(program));
+                return null;
+            }
+            return program;
+        }
+
+        const program = createProgram(vertexShaderSrc, fragmentShaderSrc);
+        gl.useProgram(program);
+
+        // Set up buffers
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = new Float32Array([
+            -1, -1, 1, -1, -1, 1,
+            -1, 1, 1, -1, 1, 1,
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+        // Set up attributes
+        const positionLocation = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        // Uniform locations
+        const timeLocation = gl.getUniformLocation(program, 'u_time');
+
+        // Texture setup
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        // Set texture parameters
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        let simulationData;
+
+        function initSimulationData() {
+            // Using Uint8Array for RGBA with values [0, 255]
+            simulationData = new Uint8Array(canvas.width * canvas.height * 4);
+
+            // Initialize with black (water) and default viscosity (128)
+            for (let i = 0; i < simulationData.length; i += 4) {
+                simulationData[i] = 0;     // R
+                simulationData[i + 1] = 0; // G
+                simulationData[i + 2] = 0; // B
+                simulationData[i + 3] = 128; // Viscosity (0.5)
+            }
+
+            updateTexture();
+        }
+
+        initSimulationData();
+
+        function updateTexture() {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(
+                gl.TEXTURE_2D,
+                0,
+                gl.RGBA,
+                canvas.width,
+                canvas.height,
+                0,
+                gl.RGBA,
+                gl.UNSIGNED_BYTE,
+                simulationData
+            );
+        }
+
+        // User interaction
+        let isDrawing = false;
+        let isStirring = false;
+        let color = [255, 0, 0]; // RGB in [0, 255]
+        let viscosity = 128;     // 0.5 scaled to [0, 255]
+        let volume = 20;         // Increased default volume
+        let mouseX = 0;
+        let mouseY = 0;
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) isDrawing = true;
+            if (e.button === 2) isStirring = true;
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (e.button === 0) isDrawing = false;
+            if (e.button === 2) isStirring = false;
+        });
+
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = Math.floor(e.clientX - rect.left);
+            mouseY = Math.floor(canvas.height - (e.clientY - rect.top));
+        });
+
+        // Menu toggle
+        const menu = document.getElementById('menu');
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'Enter') {
+                menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+            }
+        });
+
+        // Color, viscosity, and volume controls
+        const colorPicker = document.getElementById('colorPicker');
+        const viscositySlider = document.getElementById('viscositySlider');
+        const volumeSlider = document.getElementById('volumeSlider');
+
+        colorPicker.addEventListener('input', (e) => {
+            const hex = e.target.value;
+            color = [
+                parseInt(hex.substr(1, 2), 16),
+                parseInt(hex.substr(3, 2), 16),
+                parseInt(hex.substr(5, 2), 16),
+            ];
+        });
+
+        viscositySlider.addEventListener('input', (e) => {
+            viscosity = parseInt(e.target.value);
+        });
+
+        volumeSlider.addEventListener('input', (e) => {
+            volume = parseInt(e.target.value);
+        });
+
+        // Helper function to blend colors
+        function blendColors(existing, incoming) {
+            // Simple alpha blending based on viscosity
+            const alpha = incoming[3] / 255;
+            return [
+                existing[0] * (1 - alpha) + incoming[0] * alpha,
+                existing[1] * (1 - alpha) + incoming[1] * alpha,
+                existing[2] * (1 - alpha) + incoming[2] * alpha,
+                Math.min(existing[3] + incoming[3], 255)
+            ];
+        }
+
+        // Animation loop
+        let lastTime = 0;
+        function render(time) {
+            time *= 0.001; // Convert to seconds
+            const deltaTime = time - lastTime;
+            lastTime = time;
+
+            // Add liquid or turbulence if mouse is pressed
+            if (isDrawing || isStirring) {
+                for (let i = 0; i < volume; i++) {
+                    const offsetX = Math.floor(Math.random() * 21) - 10; // [-10, 10]
+                    const offsetY = Math.floor(Math.random() * 21) - 10; // [-10, 10]
+                    const x = mouseX + offsetX;
+                    const y = mouseY + offsetY;
+
+                    if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
+                        const index = (y * canvas.width + x) * 4;
+
+                        if (isDrawing) {
+                            // Blend the new color with existing color
+                            const existingColor = [
+                                simulationData[index],
+                                simulationData[index + 1],
+                                simulationData[index + 2],
+                                simulationData[index + 3]
+                            ];
+                            const incomingColor = [color[0], color[1], color[2], viscosity];
+                            const blended = blendColors(existingColor, incomingColor);
+
+                            simulationData[index] = blended[0];
+                            simulationData[index + 1] = blended[1];
+                            simulationData[index + 2] = blended[2];
+                            simulationData[index + 3] = blended[3];
+                        } else if (isStirring) {
+                            // Add turbulence by randomly altering viscosity
+                            simulationData[index + 3] = Math.min(simulationData[index + 3] + Math.floor(Math.random() * 20) - 10, 255);
+                            simulationData[index + 3] = Math.max(simulationData[index + 3], 0);
+                        }
+                    }
+                }
+                updateTexture();
+            }
+
+            // Optional: Basic gravity simulation
+            applyGravity();
+
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            gl.useProgram(program);
+            gl.uniform1f(timeLocation, time);
+
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            requestAnimationFrame(render);
+        }
+
+        // Basic gravity: Shift simulation data downward
+        function applyGravity() {
+            const newData = new Uint8Array(simulationData.length);
+            for (let y = 1; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x++) {
+                    const srcIndex = ((y - 1) * canvas.width + x) * 4;
+                    const dstIndex = (y * canvas.width + x) * 4;
+                    newData[dstIndex] = simulationData[srcIndex];
+                    newData[dstIndex + 1] = simulationData[srcIndex + 1];
+                    newData[dstIndex + 2] = simulationData[srcIndex + 2];
+                    newData[dstIndex + 3] = simulationData[srcIndex + 3];
+                }
+            }
+            // Top row remains black with default viscosity
+            for (let x = 0; x < canvas.width; x++) {
+                const index = x * 4;
+                newData[index] = 0;
+                newData[index + 1] = 0;
+                newData[index + 2] = 0;
+                newData[index + 3] = 128; // Default viscosity
+            }
+            simulationData.set(newData);
+            updateTexture();
+        }
+
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
+

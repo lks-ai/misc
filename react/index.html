@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AtOm-React: Audio Reactive Fractal DMT Visualization</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            height: 100%;
+            width: 100%;
+            cursor: none; /* Hide the default cursor for a cleaner look */
+        }
+        canvas {
+            display: block;
+            touch-action: none; /* Prevent default touch actions */
+        }
+        /* UI Controls Container */
+        #uiControls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            display: none; /* Hidden by default */
+            transition: opacity 0.5s;
+            opacity: 0;
+            z-index: 10;
+        }
+        /* Show UI Controls when active */
+        #uiControls.active {
+            display: block;
+            opacity: 1;
+        }
+        /* Slider Styles */
+        .sliderContainer {
+            margin: 10px 0;
+            color: #fff;
+            font-family: Arial, sans-serif;
+        }
+        .sliderContainer label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .sliderContainer input[type="range"],
+        .sliderContainer select {
+            width: 200px;
+        }
+        /* Responsive adjustments for mobile */
+        @media (max-width: 600px) {
+            #uiControls {
+                width: 90%;
+                left: 50%;
+                transform: translateX(-50%);
+            }
+            .sliderContainer input[type="range"],
+            .sliderContainer select {
+                width: 100%;
+            }
+        }
+        /* VR Button Styles */
+        #vrButton {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            z-index: 10;
+            display: none; /* Hidden by default */
+            background-color: rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+        }
+        #vrButton:hover {
+            background-color: rgba(255, 255, 255, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+
+    <!-- UI Controls -->
+    <div id="uiControls">
+        <div class="sliderContainer">
+            <label for="cycleSpeed">Fractal Cycle Speed</label>
+            <input type="range" id="cycleSpeed" min="0.01" max="0.2" step="0.01" value="0.05">
+        </div>
+        <div class="sliderContainer">
+            <label for="blendSpeed">Fractal Blend Speed</label>
+            <input type="range" id="blendSpeed" min="0.0" max="1.0" step="0.01" value="0.5">
+        </div>
+        <div class="sliderContainer">
+            <label for="noiseScale">Noise Scale</label>
+            <input type="range" id="noiseScale" min="1.0" max="10.0" step="0.1" value="5.0">
+        </div>
+        <div class="sliderContainer">
+            <label for="maxIter">Max Iterations</label>
+            <input type="range" id="maxIter" min="100" max="300" step="10" value="200">
+        </div>
+        <div class="sliderContainer">
+            <label for="audioSourceSelect">Audio Input Source</label>
+            <select id="audioSourceSelect"></select>
+        </div>
+    </div>
+
+    <!-- VR Button -->
+    <button id="vrButton">Enter VR</button>
+
+    <script type="text/javascript">
+        // Get the canvas element
+        const canvas = document.getElementById('glCanvas');
+
+        // Attempt to initialize WebGL 2.0 context
+        let gl = canvas.getContext('webgl2');
+        let isWebGL2 = true;
+
+        if (!gl) {
+            // Fallback to WebGL 1.0 if WebGL 2.0 is not supported
+            gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (!gl) {
+                alert('Your browser does not support WebGL.');
+            } else {
+                isWebGL2 = false;
+                console.warn('WebGL 2.0 not supported. Falling back to WebGL 1.0.');
+            }
+        }
+
+        // Resize the canvas to fit the window
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Capture mouse movement
+        let mouse = {x: 0.5, y: 0.5};
+        window.addEventListener('mousemove', function(event) {
+            mouse.x = event.clientX / window.innerWidth;
+            mouse.y = 1.0 - event.clientY / window.innerHeight; // Flip Y for shader
+        });
+
+        // Capture touch movement for mobile
+        window.addEventListener('touchmove', function(event) {
+            if (event.touches.length > 0) {
+                mouse.x = event.touches[0].clientX / window.innerWidth;
+                mouse.y = 1.0 - event.touches[0].clientY / window.innerHeight;
+            }
+        }, { passive: true });
+
+        // Toggle UI Controls with Spacebar, Enter, or double-tap
+        function toggleUIControls() {
+            const uiControls = document.getElementById('uiControls');
+            uiControls.classList.toggle('active');
+        }
+
+        // Keyboard event listener for Spacebar and Enter
+        window.addEventListener('keydown', function(event) {
+            if (event.code === 'Space' || event.code === 'Enter') {
+                toggleUIControls();
+            }
+        });
+
+        // Touch event listener for mobile (double-tap to toggle)
+        let lastTap = 0;
+        window.addEventListener('touchend', function(event) {
+            const currentTime = new Date().getTime();
+            const tapLength = currentTime - lastTap;
+            if (tapLength < 300 && tapLength > 0) {
+                toggleUIControls();
+                event.preventDefault();
+            }
+            lastTap = currentTime;
+        });
+
+        // Define shader sources based on WebGL version
+        const vertexShaderSourceGL2 = `#version 300 es
+            in vec2 a_position;
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+            }
+        `;
+
+        const fragmentShaderSourceGL2 = `#version 300 es
+            precision highp float;
+
+            uniform float u_time;
+            uniform vec2 u_resolution;
+            uniform vec2 u_mouse;
+            uniform float u_cycleSpeed;
+            uniform float u_blendSpeed;
+            uniform float u_noiseScale;
+            uniform int u_maxIter;
+
+            // Audio Reactivity Uniforms
+            uniform float u_bass;
+            uniform float u_lowMid;
+            uniform float u_mid;
+            uniform float u_highMid;
+            uniform float u_treble;
+
+            // Binocular Encoding Uniform
+            uniform vec3 u_eyePosition;
+
+            out vec4 outColor;
+
+            // Function to rotate a vector by a given angle
+            mat2 rotate2D(float angle) {
+                return mat2(
+                    cos(angle), -sin(angle),
+                    sin(angle), cos(angle)
+                );
+            }
+
+            // Simplex Noise implementation for smoother noise
+            // Source: https://thebookofshaders.com/13/
+            vec3 mod289(vec3 x) {
+                return x - floor(x * (1.0 / 289.0)) * 289.0;
+            }
+
+            vec2 mod289(vec2 x) {
+                return x - floor(x * (1.0 / 289.0)) * 289.0;
+            }
+
+            vec3 permute(vec3 x) {
+                return mod289(((x*34.0)+1.0)*x);
+            }
+
+            float snoise(vec2 v){
+                const vec4 C = vec4(0.211324865405187,  // (3.0-sqrt(3.0))/6.0
+                                    0.366025403784439,  // 0.5*(sqrt(3.0)-1.0)
+                                    -0.577350269189626, // -1.0 + 2.0 * C.x
+                                    0.024390243902439); // 1.0 / 41.0
+                vec2 i  = floor(v + dot(v, C.yy) );
+                vec2 x0 = v -   i + dot(i, C.xx);
+
+                vec2 i1;
+                i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+
+                vec4 x12 = x0.xyxy + C.xxzz;
+                x12.xy -= i1;
+
+                vec3 p = permute( permute(i.y + vec3(0.0, i1.y, 1.0))
+                    + i.x + vec3(0.0, i1.x, 1.0 ));
+
+                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+                m = m*m ;
+                m = m*m ;
+
+                vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                vec3 h = abs(x) - 0.5;
+                vec3 ox = floor(x + 0.5);
+                vec3 a0 = x - ox;
+
+                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+
+                vec3 g;
+                g.x  = a0.x  * x0.x + h.x  * x0.y;
+                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+
+                return 130.0 * dot(m, g);
+            }
+
+            // Julia Set iteration
+            float julia(vec2 z, vec2 c, int maxIter) {
+                float iter = float(maxIter);
+                for(int i = 0; i < 1000; i++) { // Prevent infinite loop
+                    if(i >= maxIter) break;
+                    z = z * z + c;
+                    if(length(z) > 4.0) {
+                        iter = float(i);
+                        break;
+                    }
+                }
+                return iter;
+            }
+
+            // Mandelbrot Set iteration
+            float mandelbrot(vec2 c, int maxIter) {
+                vec2 z = vec2(0.0);
+                float iter = float(maxIter);
+                for(int i = 0; i < 1000; i++) {
+                    if(i >= maxIter) break;
+                    z = z * z + c;
+                    if(length(z) > 4.0) {
+                        iter = float(i);
+                        break;
+                    }
+                }
+                return iter;
+            }
+
+            // Burning Ship Fractal iteration
+            float burningShip(vec2 c, int maxIter) {
+                vec2 z = vec2(0.0);
+                float iter = float(maxIter);
+                for(int i = 0; i < 1000; i++) {
+                    if(i >= maxIter) break;
+                    z = vec2(abs(z.x), abs(z.y));
+                    z = z * z + c;
+                    if(length(z) > 4.0) {
+                        iter = float(i);
+                        break;
+                    }
+                }
+                return iter;
+            }
+
+            // Function to apply rotational symmetry
+            vec2 applySymmetry(vec2 uv, float symmetryCount) {
+                float angle = atan(uv.y, uv.x);
+                float radius = length(uv);
+                float sectorAngle = (2.0 * 3.14159265359) / symmetryCount;
+                angle = mod(angle, sectorAngle);
+                angle = abs(angle - sectorAngle / 2.0); // Mirror symmetry
+                mat2 rot = rotate2D(-angle);
+                return rot * vec2(radius * cos(angle), radius * sin(angle));
+            }
+
+            void main() {
+                // Normalize pixel coordinates to range [-1, 1]
+                vec2 uv = (gl_FragCoord.xy / u_resolution.xy) * 2.0 - 1.0;
+                uv.x *= u_resolution.x / u_resolution.y; // Correct aspect ratio
+
+                // Dynamic symmetry count influenced by time, mouse, treble frequencies, and eye position for depth
+                float symmetryBase = 6.0 + u_treble * 2.0 + u_eyePosition.x * 1.0;
+                float symmetryVariation = 2.0 * sin(u_time * 0.1 + u_mouse.x * 3.1415) * cos(u_time * 0.1 + u_mouse.y * 3.1415);
+                float symmetry = symmetryBase + symmetryVariation; // Symmetry can vary
+
+                // Apply rotational symmetry
+                uv = applySymmetry(uv, symmetry);
+
+                // Dynamic shifting using smooth noise influenced by time and mouse
+                float shiftSpeed = 0.3;
+                vec2 dynamicShift = vec2(
+                    snoise(uv * 3.0 + u_time * shiftSpeed + u_mouse.x * 5.0),
+                    snoise(uv * 3.0 - u_time * shiftSpeed + u_mouse.y * 5.0)
+                ) * 0.5;
+
+                uv += dynamicShift;
+
+                // Apply zoom and rotation over time, influenced by Mid frequency
+                float zoom = 1.0 + 0.5 * sin(u_time * 0.05 + u_mouse.x * 3.1415) + u_mid * 0.5;
+                mat2 rot = rotate2D(u_time * 0.02 + u_mouse.y * 3.1415 + u_highMid * 0.5);
+                uv = rot * (uv * zoom);
+
+                // Dynamic fractal centers influenced by mouse, eye position, and Low Mid frequency for depth
+                vec2 c = vec2(
+                    0.355 + 0.05 * sin(u_time * 0.3 + u_mouse.x * 3.1415 + pow(u_mouse.y, 2.0)) + u_eyePosition.x * 0.1 + u_lowMid * 0.5,
+                    0.355 + 0.05 * cos(u_time * 0.3 + u_mouse.y * 3.1415 + pow(u_mouse.x, 2.0)) + u_eyePosition.y * 0.1 + u_lowMid * 0.5
+                );
+
+                // Fractal type cycling
+                float cycleSpeed = u_cycleSpeed; // Controlled via UI
+                float totalFractals = 3.0; // Number of fractal types
+                float fractalIndex = mod(u_time * cycleSpeed, totalFractals);
+                int fractalA = int(floor(fractalIndex));
+                float blendFactor = fractalIndex - floor(fractalIndex); // Fractional part for blending
+
+                // Compute iteration counts for fractalA
+                float iterA;
+                if(fractalA == 0){
+                    iterA = julia(uv, c, u_maxIter);
+                }
+                else if(fractalA == 1){
+                    iterA = mandelbrot(uv, u_maxIter);
+                }
+                else if(fractalA == 2){
+                    iterA = burningShip(uv, u_maxIter);
+                }
+
+                // Compute fractalB with wrapping
+                int fractalB = fractalA + 1;
+                if(fractalB >= int(totalFractals)){
+                    fractalB = fractalB - int(totalFractals);
+                }
+
+                // Compute iteration counts for fractalB
+                float iterB;
+                if(fractalB == 0){
+                    iterB = julia(uv, c, u_maxIter);
+                }
+                else if(fractalB == 1){
+                    iterB = mandelbrot(uv, u_maxIter);
+                }
+                else if(fractalB == 2){
+                    iterB = burningShip(uv, u_maxIter);
+                }
+
+                // Blend the iteration counts for smooth transition
+                float fractalIter = mix(iterA, iterB, blendFactor * u_blendSpeed);
+
+                // Enhance details with logarithmic scaling
+                float normalized = log(fractalIter) / log(float(u_maxIter));
+
+                // Apply a convolution-like kernel effect using smooth noise influenced by mouse and High Mid frequency
+                float kernel = snoise(uv * u_noiseScale + u_time * 0.1 + u_mouse.x * 2.0 + u_mouse.y * 2.0) + u_highMid * 0.3;
+                normalized *= kernel;
+
+                // Advanced coloring based on normalized fractal value, time, and multiple frequency bands
+                vec3 color = vec3(
+                    0.5 + 0.5 * sin(3.0 + normalized * 6.2831 + u_time * 0.2) * u_bass,
+                    0.5 + 0.5 * sin(3.0 + normalized * 6.2831 + 2.0 + u_time * 0.2) * u_lowMid,
+                    0.5 + 0.5 * sin(3.0 + normalized * 6.2831 + 4.0 + u_time * 0.2) * u_mid
+                );
+
+                // Add brightness based on fractal density
+                color *= normalized;
+
+                // Apply gamma correction for better color representation
+                color = pow(color, vec3(0.8));
+
+                outColor = vec4(color, 1.0);
+            }
+        `;
+
+        // Fragment shader source code for WebGL 1.0 with Simplex Noise and multiple fractal types
+        const fragmentShaderSourceGL1 = `
+            precision highp float;
+
+            uniform float u_time;
+            uniform vec2 u_resolution;
+            uniform vec2 u_mouse;
+            uniform float u_cycleSpeed;
+            uniform float u_blendSpeed;
+            uniform float u_noiseScale;
+            uniform int u_maxIter;
+
+            // Audio Reactivity Uniforms
+            uniform float u_bass;
+            uniform float u_lowMid;
+            uniform float u_mid;
+            uniform float u_highMid;
+            uniform float u_treble;
+
+            // Binocular Encoding Uniform
+            uniform vec3 u_eyePosition;
+
+            // Function to rotate a vector by a given angle
+            mat2 rotate2D(float angle) {
+                return mat2(
+                    cos(angle), -sin(angle),
+                    sin(angle), cos(angle)
+                );
+            }
+
+            // Simplex Noise implementation for smoother noise
+            // Source: https://thebookofshaders.com/13/
+            vec3 mod289(vec3 x) {
+                return x - floor(x * (1.0 / 289.0)) * 289.0;
+            }
+
+            vec2 mod289(vec2 x) {
+                return x - floor(x * (1.0 / 289.0)) * 289.0;
+            }
+
+            vec3 permute(vec3 x) {
+                return mod289(((x*34.0)+1.0)*x);
+            }
+
+            float snoise(vec2 v){
+                const vec4 C = vec4(0.211324865405187,  // (3.0-sqrt(3.0))/6.0
+                                    0.366025403784439,  // 0.5*(sqrt(3.0)-1.0)
+                                    -0.577350269189626, // -1.0 + 2.0 * C.x
+                                    0.024390243902439); // 1.0 / 41.0
+                vec2 i  = floor(v + dot(v, C.yy) );
+                vec2 x0 = v -   i + dot(i, C.xx);
+
+                vec2 i1;
+                i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+
+                vec4 x12 = x0.xyxy + C.xxzz;
+                x12.xy -= i1;
+
+                vec3 p = permute( permute(i.y + vec3(0.0, i1.y, 1.0))
+                    + i.x + vec3(0.0, i1.x, 1.0 ));
+
+                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+                m = m*m ;
+                m = m*m ;
+
+                vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                vec3 h = abs(x) - 0.5;
+                vec3 ox = floor(x + 0.5);
+                vec3 a0 = x - ox;
+
+                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+
+                vec3 g;
+                g.x  = a0.x  * x0.x + h.x  * x0.y;
+                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+
+                return 130.0 * dot(m, g);
+            }
+
+            // Julia Set iteration
+            float julia(vec2 z, vec2 c, int maxIter) {
+                float iter = float(maxIter);
+                for(int i = 0; i < 1000; i++) { // Prevent infinite loop
+                    if(i >= maxIter) break;
+                    z = z * z + c;
+                    if(length(z) > 4.0) {
+                        iter = float(i);
+                        break;
+                    }
+                }
+                return iter;
+            }
+
+            // Mandelbrot Set iteration
+            float mandelbrot(vec2 c, int maxIter) {
+                vec2 z = vec2(0.0);
+                float iter = float(maxIter);
+                for(int i = 0; i < 1000; i++) {
+                    if(i >= maxIter) break;
+                    z = z * z + c;
+                    if(length(z) > 4.0) {
+                        iter = float(i);
+                        break;
+                    }
+                }
+                return iter;
+            }
+
+            // Burning Ship Fractal iteration
+            float burningShip(vec2 c, int maxIter) {
+                vec2 z = vec2(0.0);
+                float iter = float(maxIter);
+                for(int i = 0; i < 1000; i++) {
+                    if(i >= maxIter) break;
+                    z = vec2(abs(z.x), abs(z.y));
+                    z = z * z + c;
+                    if(length(z) > 4.0) {
+                        iter = float(i);
+                        break;
+                    }
+                }
+                return iter;
+            }
+
+            // Function to apply rotational symmetry
+            vec2 applySymmetry(vec2 uv, float symmetryCount) {
+                float angle = atan(uv.y, uv.x);
+                float radius = length(uv);
+                float sectorAngle = (2.0 * 3.14159265359) / symmetryCount;
+                angle = mod(angle, sectorAngle);
+                angle = abs(angle - sectorAngle / 2.0); // Mirror symmetry
+                mat2 rot = rotate2D(-angle);
+                return rot * vec2(radius * cos(angle), radius * sin(angle));
+            }
+
+            void main() {
+                // Normalize pixel coordinates to range [-1, 1]
+                vec2 uv = (gl_FragCoord.xy / u_resolution.xy) * 2.0 - 1.0;
+                uv.x *= u_resolution.x / u_resolution.y; // Correct aspect ratio
+
+                // Dynamic symmetry count influenced by time, mouse, treble frequencies, and eye position for depth
+                float symmetryBase = 6.0 + u_treble * 2.0 + u_eyePosition.x * 1.0;
+                float symmetryVariation = 2.0 * sin(u_time * 0.1 + u_mouse.x * 3.1415) * cos(u_time * 0.1 + u_mouse.y * 3.1415);
+                float symmetry = symmetryBase + symmetryVariation; // Symmetry can vary
+
+                // Apply rotational symmetry
+                uv = applySymmetry(uv, symmetry);
+
+                // Dynamic shifting using smooth noise influenced by time and mouse
+                float shiftSpeed = 0.3;
+                vec2 dynamicShift = vec2(
+                    snoise(uv * 3.0 + u_time * shiftSpeed + u_mouse.x * 5.0),
+                    snoise(uv * 3.0 - u_time * shiftSpeed + u_mouse.y * 5.0)
+                ) * 0.5;
+
+                uv += dynamicShift;
+
+                // Apply zoom and rotation over time, influenced by Mid frequency
+                float zoom = 1.0 + 0.5 * sin(u_time * 0.05 + u_mouse.x * 3.1415) + u_mid * 0.5;
+                mat2 rot = rotate2D(u_time * 0.02 + u_mouse.y * 3.1415 + u_highMid * 0.5);
+                uv = rot * (uv * zoom);
+
+                // Dynamic fractal centers influenced by mouse, eye position, and Low Mid frequency for depth
+                vec2 c = vec2(
+                    0.355 + 0.05 * sin(u_time * 0.3 + u_mouse.x * 3.1415 + pow(u_mouse.y, 2.0)) + u_eyePosition.x * 0.1 + u_lowMid * 0.5,
+                    0.355 + 0.05 * cos(u_time * 0.3 + u_mouse.y * 3.1415 + pow(u_mouse.x, 2.0)) + u_eyePosition.y * 0.1 + u_lowMid * 0.5
+                );
+
+                // Fractal type cycling
+                float cycleSpeed = u_cycleSpeed; // Controlled via UI
+                float totalFractals = 3.0; // Number of fractal types
+                float fractalIndex = mod(u_time * cycleSpeed, totalFractals);
+                int fractalA = int(floor(fractalIndex));
+                float blendFactor = fractalIndex - floor(fractalIndex); // Fractional part for blending
+
+                // Compute iteration counts for fractalA
+                float iterA;
+                if(fractalA == 0){
+                    iterA = julia(uv, c, u_maxIter);
+                }
+                else if(fractalA == 1){
+                    iterA = mandelbrot(uv, u_maxIter);
+                }
+                else if(fractalA == 2){
+                    iterA = burningShip(uv, u_maxIter);
+                }
+
+                // Compute fractalB with wrapping
+                int fractalB = fractalA + 1;
+                if(fractalB >= int(totalFractals)){
+                    fractalB = fractalB - int(totalFractals);
+                }
+
+                // Compute iteration counts for fractalB
+                float iterB;
+                if(fractalB == 0){
+                    iterB = julia(uv, c, u_maxIter);
+                }
+                else if(fractalB == 1){
+                    iterB = mandelbrot(uv, u_maxIter);
+                }
+                else if(fractalB == 2){
+                    iterB = burningShip(uv, u_maxIter);
+                }
+
+                // Blend the iteration counts for smooth transition
+                float fractalIter = mix(iterA, iterB, blendFactor * u_blendSpeed);
+
+                // Enhance details with logarithmic scaling
+                float normalized = log(fractalIter) / log(float(u_maxIter));
+
+                // Apply a convolution-like kernel effect using smooth noise influenced by mouse and High Mid frequency
+                float kernel = snoise(uv * u_noiseScale + u_time * 0.1 + u_mouse.x * 2.0 + u_mouse.y * 2.0) + u_highMid * 0.3;
+                normalized *= kernel;
+
+                // Advanced coloring based on normalized fractal value, time, and multiple frequency bands
+                vec3 color = vec3(
+                    0.5 + 0.5 * sin(3.0 + normalized * 6.2831 + u_time * 0.2) * u_bass,
+                    0.5 + 0.5 * sin(3.0 + normalized * 6.2831 + 2.0 + u_time * 0.2) * u_lowMid,
+                    0.5 + 0.5 * sin(3.0 + normalized * 6.2831 + 4.0 + u_time * 0.2) * u_mid
+                );
+
+                // Add brightness based on fractal density
+                color *= normalized;
+
+                // Apply gamma correction for better color representation
+                color = pow(color, vec3(0.8));
+
+                outColor = vec4(color, 1.0);
+            }
+        `;
+
+        // Function to compile shader
+        function compileShader(source, type) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+            if (!success) {
+                console.error('Could not compile shader:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Function to create shader program
+        function createProgram(vertexSource, fragmentSource) {
+            const vertexShader = compileShader(vertexSource, gl.VERTEX_SHADER);
+            const fragmentShader = compileShader(fragmentSource, gl.FRAGMENT_SHADER);
+
+            if (!vertexShader || !fragmentShader) {
+                throw new Error('Shader compilation failed');
+            }
+
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+
+            const linked = gl.getProgramParameter(program, gl.LINK_STATUS);
+            if (!linked) {
+                console.error('Program failed to link:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+
+            return program;
+        }
+
+        // Select shader sources based on WebGL version
+        let vertexShaderSource, fragmentShaderSource;
+
+        if (isWebGL2) {
+            vertexShaderSource = vertexShaderSourceGL2;
+            fragmentShaderSource = fragmentShaderSourceGL2;
+        } else {
+            vertexShaderSource = `
+                attribute vec2 a_position;
+                void main() {
+                    gl_Position = vec4(a_position, 0.0, 1.0);
+                }
+            `;
+            fragmentShaderSource = fragmentShaderSourceGL1;
+        }
+
+        // Create shader program
+        const program = createProgram(vertexShaderSource, fragmentShaderSource);
+
+        if (!program) {
+            throw new Error('Shader program creation failed');
+        }
+
+        gl.useProgram(program);
+
+        // Set up rectangle covering the entire canvas
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = [
+            -1, -1,
+             1, -1,
+            -1,  1,
+            -1,  1,
+             1, -1,
+             1,  1,
+        ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+        // Get attribute location and enable it
+        let positionLocation;
+        if (isWebGL2) {
+            positionLocation = gl.getAttribLocation(program, 'a_position');
+        } else {
+            positionLocation = gl.getAttribLocation(program, 'a_position');
+        }
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(
+            positionLocation, // Attribute location
+            2,                // Number of components per attribute
+            gl.FLOAT,         // Type
+            false,            // Normalize
+            0,                // Stride
+            0                 // Offset
+        );
+
+        // Get uniform locations
+        const timeLocation = gl.getUniformLocation(program, 'u_time');
+        const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
+        const mouseLocation = gl.getUniformLocation(program, 'u_mouse');
+        const cycleSpeedLocation = gl.getUniformLocation(program, 'u_cycleSpeed');
+        const blendSpeedLocation = gl.getUniformLocation(program, 'u_blendSpeed');
+        const noiseScaleLocation = gl.getUniformLocation(program, 'u_noiseScale');
+        const maxIterLocation = gl.getUniformLocation(program, 'u_maxIter');
+
+        // New uniform locations for audio reactivity
+        const bassLocation = gl.getUniformLocation(program, 'u_bass');
+        const lowMidLocation = gl.getUniformLocation(program, 'u_lowMid');
+        const midLocation = gl.getUniformLocation(program, 'u_mid');
+        const highMidLocation = gl.getUniformLocation(program, 'u_highMid');
+        const trebleLocation = gl.getUniformLocation(program, 'u_treble');
+
+        // New uniform location for binocular encoding
+        const eyePositionLocation = gl.getUniformLocation(program, 'u_eyePosition');
+
+        // Default parameter values
+        let cycleSpeed = 0.05;
+        let blendSpeed = 0.5;
+        let baseNoiseScale = 5.0; // Renamed for clarity
+        let maxIter = 200;
+
+        // UI Controls Elements
+        const cycleSpeedSlider = document.getElementById('cycleSpeed');
+        const blendSpeedSlider = document.getElementById('blendSpeed');
+        const noiseScaleSlider = document.getElementById('noiseScale');
+        const maxIterSlider = document.getElementById('maxIter');
+        const audioSourceSelect = document.getElementById('audioSourceSelect');
+
+        // Event listeners for UI controls
+        cycleSpeedSlider.addEventListener('input', function() {
+            cycleSpeed = parseFloat(this.value);
+        });
+
+        blendSpeedSlider.addEventListener('input', function() {
+            blendSpeed = parseFloat(this.value);
+        });
+
+        noiseScaleSlider.addEventListener('input', function() {
+            baseNoiseScale = parseFloat(this.value);
+        });
+
+        maxIterSlider.addEventListener('input', function() {
+            maxIter = parseInt(this.value);
+        });
+
+        // VR Button Element
+        const vrButton = document.getElementById('vrButton');
+
+        // WebXR Variables
+        let xrSession = null;
+        let xrReferenceSpace = null;
+
+        // Initialize WebXR and request session if supported and on mobile
+        async function initializeVR() {
+            const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+            const isVRSupported = await navigator.xr.isSessionSupported('immersive-vr');
+
+            if (isMobile && isVRSupported) {
+                vrButton.style.display = 'block';
+                vrButton.addEventListener('click', () => {
+                    navigator.xr.requestSession('immersive-vr').then(onSessionStarted).catch(err => {
+                        console.error('Failed to start XR session:', err);
+                    });
+                });
+            }
+        }
+
+        // Handle session start
+        function onSessionStarted(session) {
+            xrSession = session;
+            xrSession.updateRenderState({
+                baseLayer: new XRWebGLLayer(xrSession, gl)
+            });
+
+            xrSession.addEventListener('end', () => {
+                xrSession = null;
+                xrReferenceSpace = null;
+            });
+
+            navigator.xr.requestReferenceSpace('local').then((refSpace) => {
+                xrReferenceSpace = refSpace;
+                xrSession.requestAnimationFrame(onXRFrame);
+            }).catch(err => {
+                console.error('Error requesting reference space:', err);
+            });
+        }
+
+        // XR Rendering Frame
+        function onXRFrame(time, frame) {
+            xrSession.requestAnimationFrame(onXRFrame);
+            const pose = frame.getViewerPose(xrReferenceSpace);
+
+            if (pose) {
+                const baseLayer = xrSession.renderState.baseLayer;
+                gl.bindFramebuffer(gl.FRAMEBUFFER, baseLayer.framebuffer);
+
+                // Clear the framebuffer
+                gl.clearColor(0.0, 0.0, 0.0, 1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+
+                // Iterate through each view (left and right eye)
+                for (const view of pose.views) {
+                    const viewport = baseLayer.getViewport(view);
+                    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+
+                    // Extract eye position from the pose
+                    const eyeTransform = view.transform;
+                    const eyePosition = eyeTransform.position;
+
+                    // Pass eye position to shader
+                    gl.uniform3fv(eyePositionLocation, [eyePosition.x, eyePosition.y, eyePosition.z]);
+
+                    // Draw the scene
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+                }
+            }
+        }
+
+        // Initialize WebXR
+        initializeVR();
+
+        // Audio Context Setup
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let source;
+
+        // Initialize Audio
+        async function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+
+                // Enumerate audio input devices and populate the select dropdown
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputDevices = devices.filter(device => device.kind === 'audioinput');
+
+                let defaultLabelCounter = 1;
+
+                audioInputDevices.forEach(device => {
+                    const option = document.createElement('option');
+                    if (device.label && !/^data:/.test(device.label)) { // Check if label is meaningful
+                        option.value = device.deviceId;
+                        option.textContent = device.label;
+                    } else {
+                        option.value = device.deviceId;
+                        option.textContent = `Microphone ${defaultLabelCounter}`;
+                        defaultLabelCounter++;
+                    }
+                    audioSourceSelect.appendChild(option);
+                });
+
+                if (audioInputDevices.length === 0) {
+                    alert('No audio input devices found.');
+                    return;
+                }
+
+                // Setup audio source with the first available device
+                setupAudioSource(audioInputDevices[0].deviceId);
+
+                // Handle source selection
+                audioSourceSelect.addEventListener('change', (event) => {
+                    setupAudioSource(event.target.value);
+                });
+            } catch (e) {
+                console.error('Audio initialization failed:', e);
+            }
+        }
+
+        // Setup Audio Source based on selected device
+        function setupAudioSource(deviceId) {
+            if (source) {
+                source.disconnect();
+            }
+
+            navigator.mediaDevices.getUserMedia({
+                audio: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined
+                }
+            }).then((stream) => {
+                source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+            }).catch(err => {
+                console.error('Error accessing audio stream:', err);
+            });
+        }
+
+        // Function to analyze audio data and update uniforms
+        function analyzeAudio() {
+            if (!analyser) return;
+
+            analyser.getByteFrequencyData(dataArray);
+
+            // Define frequency ranges for different bands
+            const frequencyBands = {
+                bass: [20, 250],
+                lowMid: [250, 500],
+                mid: [500, 2000],
+                highMid: [2000, 4000],
+                treble: [4000, 16000]
+            };
+
+            const sampleRate = audioContext.sampleRate;
+            const fftSize = analyser.fftSize;
+            const frequencyStep = sampleRate / fftSize;
+
+            const bandAverages = {};
+
+            Object.keys(frequencyBands).forEach(band => {
+                const [minFreq, maxFreq] = frequencyBands[band];
+                const startBin = Math.floor(minFreq / frequencyStep);
+                const endBin = Math.floor(maxFreq / frequencyStep);
+                let sum = 0;
+                let count = 0;
+                for (let i = startBin; i < endBin && i < dataArray.length; i++) {
+                    sum += dataArray[i];
+                    count++;
+                }
+                bandAverages[band] = count ? sum / count : 0;
+            });
+
+            // Apply non-linear mappings (e.g., square root for smoother scaling)
+            const mappedBands = {
+                bass: Math.sqrt(bandAverages.bass) / Math.sqrt(255.0),
+                lowMid: Math.pow(bandAverages.lowMid / 255.0, 1.5),
+                mid: Math.pow(bandAverages.mid / 255.0, 1.2),
+                highMid: Math.pow(bandAverages.highMid / 255.0, 1.3),
+                treble: Math.sqrt(bandAverages.treble) / Math.sqrt(255.0)
+            };
+
+            // Compute spectral complexity based on active frequency bands
+            const threshold = 0.3; // Define a threshold for significant energy
+            let activeBands = 0;
+            Object.keys(mappedBands).forEach(band => {
+                if (mappedBands[band] > threshold) {
+                    activeBands++;
+                }
+            });
+            const totalBands = Object.keys(frequencyBands).length;
+            const spectralComplexity = activeBands / totalBands; // Range from 0.0 to 1.0
+
+            // Define noise scale adjustment factor based on spectral complexity
+            const noiseScaleFactor = 1.0; // You can adjust this factor as needed
+            const noiseScaleAdjustment = 1.0 + spectralComplexity * noiseScaleFactor;
+
+            // Compute final noise scale, ensuring it stays within a reasonable range
+            let finalNoiseScale = baseNoiseScale * noiseScaleAdjustment;
+            finalNoiseScale = Math.min(Math.max(finalNoiseScale, 1.0), 10.0); // Clamp between 1.0 and 10.0
+
+            // Update shader uniforms based on audio
+            gl.uniform1f(bassLocation, mappedBands.bass);
+            gl.uniform1f(lowMidLocation, mappedBands.lowMid);
+            gl.uniform1f(midLocation, mappedBands.mid);
+            gl.uniform1f(highMidLocation, mappedBands.highMid);
+            gl.uniform1f(trebleLocation, mappedBands.treble);
+            gl.uniform1f(noiseScaleLocation, finalNoiseScale);
+        }
+
+        // Initialize Audio on page load
+        initAudio();
+
+        let startTime = Date.now();
+
+        // Render loop
+        function render() {
+            // Calculate elapsed time in seconds
+            const currentTime = Date.now();
+            const elapsedTime = (currentTime - startTime) / 1000.0;
+
+            // Analyze audio and update audio-based uniforms
+            analyzeAudio();
+
+            // Set uniform values
+            gl.uniform1f(timeLocation, elapsedTime);
+            gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+            gl.uniform2f(mouseLocation, mouse.x, mouse.y);
+            gl.uniform1f(cycleSpeedLocation, cycleSpeed);
+            gl.uniform1f(blendSpeedLocation, blendSpeed);
+            gl.uniform1i(maxIterLocation, maxIter);
+
+            // Clear the canvas
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            // Draw the rectangle
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            // Request the next frame
+            requestAnimationFrame(render);
+        }
+
+        // Start rendering
+        render();
+    </script>
+</body>
+</html>
+

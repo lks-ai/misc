@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ferrofluid Simulation Game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      user-select: none;
+      background-color: #000;
+    }
+    #glCanvas {
+      display: block;
+    }
+    #overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: Arial, sans-serif;
+      z-index: 1;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="glCanvas"></canvas>
+  <div id="overlay">
+    <p>Left-click and drag to draw copper wires.</p>
+    <p>Connect wires from the red (positive) to the green (negative) terminal to start current.</p>
+    <p>Right-click to add more ferrofluid at the mouse location.</p>
+    <p>Current Strength: <span id="currentStrength">1</span>x</p>
+  </div>
+
+  <script type="text/javascript">
+    // === WebGL Setup ===
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl2');
+
+    if (!gl) {
+      alert('WebGL 2 is not available in your browser.');
+    }
+
+    // === Resize Canvas to Fit Window ===
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      updateTerminalsPosition();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // === Vector2 Class ===
+    class Vector2 {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+
+      subtract(v) {
+        return new Vector2(this.x - v.x, this.y - v.y);
+      }
+
+      add(v) {
+        return new Vector2(this.x + v.x, this.y + v.y);
+      }
+
+      multiplyScalar(s) {
+        return new Vector2(this.x * s, this.y * s);
+      }
+
+      divideScalar(s) {
+        return new Vector2(this.x / s, this.y / s);
+      }
+
+      length() {
+        return Math.hypot(this.x, this.y);
+      }
+
+      normalize() {
+        const len = this.length();
+        return len > 0 ? this.divideScalar(len) : new Vector2(0, 0);
+      }
+
+      dot(v) {
+        return this.x * v.x + this.y * v.y;
+      }
+
+      cross(v) {
+        return this.x * v.y - this.y * v.x;
+      }
+    }
+
+    // === Particle Class ===
+    class Particle {
+      constructor(position, magneticMoment) {
+        this.position = position;
+        this.velocity = new Vector2(0, 0);
+        this.acceleration = new Vector2(0, 0);
+        this.magneticMoment = magneticMoment;
+      }
+
+      applyForce(force) {
+        this.acceleration = this.acceleration.add(force);
+      }
+
+      applyMagneticField(B, strength) {
+        // Simplified torque effect scaled by current strength
+        const torque = this.magneticMoment.cross(B);
+        // Apply a force perpendicular to the magnetic moment and torque
+        const force = new Vector2(-torque * this.magneticMoment.y, torque * this.magneticMoment.x).multiplyScalar(strength);
+        this.applyForce(force);
+      }
+
+      update(deltaTime) {
+        // Update velocity and position
+        this.velocity = this.velocity.add(this.acceleration.multiplyScalar(deltaTime));
+        this.position = this.position.add(this.velocity.multiplyScalar(deltaTime));
+        // Reset acceleration
+        this.acceleration = new Vector2(0, 0);
+        // Handle boundary collisions
+        this.handleBoundaryCollision();
+      }
+
+      handleBoundaryCollision() {
+        const damping = 0.5; // Damping factor on collision
+
+        if (this.position.x < 0) {
+          this.position.x = 0;
+          this.velocity.x *= -damping;
+        } else if (this.position.x > canvas.width) {
+          this.position.x = canvas.width;
+          this.velocity.x *= -damping;
+        }
+
+        if (this.position.y < 0) {
+          this.position.y = 0;
+          this.velocity.y *= -damping;
+        } else if (this.position.y > canvas.height) {
+          this.position.y = canvas.height;
+          this.velocity.y *= -damping;
+        }
+      }
+    }
+
+    // === Spatial Grid for Optimization ===
+    class SpatialGrid {
+      constructor(cellSize, width, height) {
+        this.cellSize = cellSize;
+        this.cells = {};
+        this.width = width;
+        this.height = height;
+      }
+
+      clear() {
+        this.cells = {};
+      }
+
+      getCellKey(position) {
+        const x = Math.floor(position.x / this.cellSize);
+        const y = Math.floor(position.y / this.cellSize);
+        return `${x},${y}`;
+      }
+
+      addParticle(particle) {
+        const cellKey = this.getCellKey(particle.position);
+        if (!this.cells[cellKey]) this.cells[cellKey] = [];
+        this.cells[cellKey].push(particle);
+      }
+
+      getNeighboringParticles(particle) {
+        const x = Math.floor(particle.position.x / this.cellSize);
+        const y = Math.floor(particle.position.y / this.cellSize);
+        let neighbors = [];
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const cellKey = `${x + dx},${y + dy}`;
+            if (this.cells[cellKey]) {
+              neighbors = neighbors.concat(this.cells[cellKey]);
+            }
+          }
+        }
+        return neighbors;
+      }
+    }
+
+    // === Initialize Particles and Grid ===
+    const particles = [];
+    const initialNumParticles = 2000;
+    const gridCellSize = 50;
+    let spatialGrid = new SpatialGrid(gridCellSize, canvas.width, canvas.height);
+
+    function initializeParticles(initialPosition = null) {
+      for (let i = 0; i < initialNumParticles; i++) {
+        let position;
+        if (initialPosition) {
+          position = new Vector2(initialPosition.x + (Math.random() - 0.5) * 20, initialPosition.y + (Math.random() - 0.5) * 20);
+        } else {
+          position = new Vector2(Math.random() * canvas.width, Math.random() * canvas.height);
+        }
+        const angle = Math.random() * Math.PI * 2;
+        const magneticMoment = new Vector2(Math.cos(angle), Math.sin(angle));
+        particles.push(new Particle(position, magneticMoment));
+      }
+    }
+
+    initializeParticles();
+
+    // === Terminals Initialization ===
+    const terminalSize = 30; // Size of the terminal squares
+    const terminals = [
+      { position: new Vector2(50, canvas.height / 2), type: 'positive' },
+      { position: new Vector2(canvas.width - 50, canvas.height / 2), type: 'negative' }
+    ];
+
+    function updateTerminalsPosition() {
+      terminals[0].position = new Vector2(50, canvas.height / 2);
+      terminals[1].position = new Vector2(canvas.width - 50, canvas.height / 2);
+    }
+
+    // === Shader Sources ===
+    const vertexShaderSourceParticle = `#version 300 es
+    in vec2 a_position;
+    uniform vec2 u_resolution;
+    uniform float u_pointSize;
+    void main() {
+      // Convert from pixels to clip space
+      vec2 zeroToOne = a_position / u_resolution;
+      vec2 zeroToTwo = zeroToOne * 2.0;
+      vec2 clipSpace = zeroToTwo - 1.0;
+      gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+      gl_PointSize = u_pointSize;
+    }
+    `;
+
+    const fragmentShaderSourceParticle = `#version 300 es
+    precision highp float;
+    uniform vec4 u_color;
+    out vec4 outColor;
+    void main() {
+      // Simple circular point
+      float dist = distance(gl_PointCoord, vec2(0.5));
+      if (dist < 0.5) {
+        outColor = u_color;
+      } else {
+        discard;
+      }
+    }
+    `;
+
+    const vertexShaderSourceWire = `#version 300 es
+    in vec2 a_position;
+    uniform vec2 u_resolution;
+    void main() {
+      vec2 zeroToOne = a_position / u_resolution;
+      vec2 zeroToTwo = zeroToOne * 2.0;
+      vec2 clipSpace = zeroToTwo - 1.0;
+      gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+    }
+    `;
+
+    const fragmentShaderSourceWire = `#version 300 es
+    precision highp float;
+    uniform vec4 u_color;
+    out vec4 outColor;
+    void main() {
+      outColor = u_color;
+    }
+    `;
+
+    // === Shader Compilation Utility ===
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+      if (success) {
+        return shader;
+      }
+      console.error(gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+    }
+
+    // === Program Linking Utility ===
+    function createProgram(gl, vertexShader, fragmentShader) {
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+      if (success) {
+        return program;
+      }
+      console.error(gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
+    }
+
+    // === Compile Shaders and Create Programs ===
+    const particleVertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSourceParticle);
+    const particleFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSourceParticle);
+    const particleProgram = createProgram(gl, particleVertexShader, particleFragmentShader);
+
+    const wireVertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSourceWire);
+    const wireFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSourceWire);
+    const wireProgram = createProgram(gl, wireVertexShader, wireFragmentShader);
+
+    // === Look Up Attribute and Uniform Locations ===
+    const particlePositionLocation = gl.getAttribLocation(particleProgram, 'a_position');
+    const particleResolutionLocation = gl.getUniformLocation(particleProgram, 'u_resolution');
+    const particleColorLocation = gl.getUniformLocation(particleProgram, 'u_color');
+    const particlePointSizeLocation = gl.getUniformLocation(particleProgram, 'u_pointSize');
+
+    const wirePositionLocation = gl.getAttribLocation(wireProgram, 'a_position');
+    const wireResolutionLocation = gl.getUniformLocation(wireProgram, 'u_resolution');
+    const wireColorLocation = gl.getUniformLocation(wireProgram, 'u_color');
+
+    // === Create Buffers ===
+    const particleBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, particleBuffer);
+
+    const wireBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, wireBuffer);
+
+    // === Copper Wire Drawing ===
+    let drawingWire = false;
+    let copperWirePoints = [];
+    let wireSegments = []; // Array of { start: Vector2, end: Vector2, chainId: number }
+    let currentFlowing = false;
+
+    // For managing wire chains
+    let chainIdCounter = 0;
+    const chains = {}; // chainId -> { segments: [...], connectedToPositive: bool, connectedToNegative: bool }
+
+    // Current Strength Variables
+    let currentStrength = 1; // Default current strength
+    const maxCurrentStrength = 5; // Maximum allowed current strength
+    const currentStrengthElement = document.getElementById('currentStrength');
+
+    // === Event Listeners ===
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 0) { // Left mouse button
+        drawingWire = true;
+        const pos = getMousePosition(e);
+        copperWirePoints = [pos];
+      } else if (e.button === 2) { // Right mouse button
+        e.preventDefault();
+        const pos = getMousePosition(e);
+        initializeParticles(pos);
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!drawingWire) return;
+      const pos = getMousePosition(e);
+      const lastPos = copperWirePoints[copperWirePoints.length - 1];
+      const distanceBetween = lastPos.subtract(pos).length();
+      if (distanceBetween > 5) { // Add point if distance > threshold to simplify
+        copperWirePoints.push(pos);
+        addWireSegment(lastPos, pos);
+      }
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      if (e.button === 0) { // Left mouse button
+        drawingWire = false;
+        checkWireConnection();
+        if (currentFlowing) {
+          magnifyCurrent();
+        }
+      }
+    });
+
+    // Prevent context menu on right-click
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+
+    // === Add Wire Segment and Manage Chains ===
+    function addWireSegment(start, end) {
+      const newSegment = { start, end, chainId: null };
+      // Determine if this segment connects to any existing chain
+      let connectedChains = new Set();
+
+      // Check for connections with existing segments
+      wireSegments.forEach(seg => {
+        if (segmentsAreConnected(seg, newSegment)) {
+          if (seg.chainId !== null) {
+            connectedChains.add(seg.chainId);
+          }
+        }
+      });
+
+      if (connectedChains.size === 0) {
+        // New chain
+        newSegment.chainId = chainIdCounter;
+        chains[chainIdCounter] = { segments: [newSegment], connectedToPositive: false, connectedToNegative: false };
+        chainIdCounter++;
+      } else {
+        // Merge all connected chains into one
+        const mergedChainId = Math.min(...connectedChains);
+        newSegment.chainId = mergedChainId;
+        chains[mergedChainId].segments.push(newSegment);
+
+        // Merge other chains into the mergedChainId
+        const chainsToMerge = Array.from(connectedChains).filter(id => id !== mergedChainId);
+        chainsToMerge.forEach(id => {
+          chains[id].segments.forEach(seg => {
+            seg.chainId = mergedChainId;
+            chains[mergedChainId].segments.push(seg);
+          });
+          delete chains[id];
+        });
+      }
+
+      // Check if the new segment connects to any terminal
+      if (isSegmentConnectedToTerminal(newSegment, terminals[0])) {
+        chains[newSegment.chainId].connectedToPositive = true;
+      }
+      if (isSegmentConnectedToTerminal(newSegment, terminals[1])) {
+        chains[newSegment.chainId].connectedToNegative = true;
+      }
+
+      wireSegments.push(newSegment);
+    }
+
+    // === Check if Two Segments are Connected ===
+    function segmentsAreConnected(seg1, seg2) {
+      const threshold = 10; // Distance threshold to consider connected
+      return (
+        distance(seg1.start, seg2.start) < threshold ||
+        distance(seg1.start, seg2.end) < threshold ||
+        distance(seg1.end, seg2.start) < threshold ||
+        distance(seg1.end, seg2.end) < threshold
+      );
+    }
+
+    // === Check if a Segment is Connected to a Terminal ===
+    function isSegmentConnectedToTerminal(segment, terminal) {
+      const threshold = 20;
+      return (
+        distance(segment.start, terminal.position) < threshold ||
+        distance(segment.end, terminal.position) < threshold
+      );
+    }
+
+    // === Check Wire Connections to Terminals and Update Current Flow ===
+    function checkWireConnection() {
+      currentFlowing = false;
+      for (const chainId in chains) {
+        const chain = chains[chainId];
+        if (chain.connectedToPositive && chain.connectedToNegative) {
+          currentFlowing = true;
+          break;
+        }
+      }
+    }
+
+    // === Magnify Current Function ===
+    function magnifyCurrent() {
+      if (currentStrength < maxCurrentStrength) {
+        currentStrength *= 1.5; // Increase current strength by 50%
+        currentStrength = Math.min(currentStrength, maxCurrentStrength); // Cap the current strength
+        currentStrengthElement.textContent = currentStrength.toFixed(1);
+      }
+    }
+
+    // === Reset Current Strength Function ===
+    function resetCurrentStrength() {
+      currentStrength = 1;
+      currentStrengthElement.textContent = currentStrength;
+    }
+
+    // === Utility Functions ===
+    function getMousePosition(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return new Vector2(evt.clientX - rect.left, evt.clientY - rect.top);
+    }
+
+    function distance(a, b) {
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    // === Magnetic Field Calculation ===
+    function calculateMagneticFieldAtPoint(point) {
+      let magneticField = new Vector2(0, 0);
+      wireSegments.forEach(segment => {
+        if (!currentFlowing) return;
+        const B = calculateBiotSavart(point, segment.start, segment.end);
+        magneticField = magneticField.add(B);
+      });
+      return magneticField.multiplyScalar(currentStrength);
+    }
+
+    // === Simplified Biot–Savart Law ===
+    function calculateBiotSavart(point, start, end) {
+      const mu0 = 1; // Simplified constant
+      const dl = end.subtract(start);
+      const r1 = point.subtract(start);
+      const r2 = point.subtract(end);
+      const cross1 = dl.cross(r1);
+      const cross2 = dl.cross(r2);
+      const r1Mag = r1.length();
+      const r2Mag = r2.length();
+      const r = r1.subtract(r2);
+      const rMag = r.length();
+
+      if (rMag === 0) return new Vector2(0, 0);
+
+      const factor = mu0 / (4 * Math.PI * Math.pow(rMag, 3));
+      return new Vector2(cross1, cross2).multiplyScalar(factor);
+    }
+
+    // === Simulation Loop ===
+    let lastTime = 0;
+    function simulationStep(time) {
+      const deltaTime = (time - lastTime) / 1000; // Convert to seconds
+      lastTime = time;
+
+      // Update spatial grid
+      spatialGrid.clear();
+      particles.forEach(p => spatialGrid.addParticle(p));
+
+      // Update particles
+      particles.forEach(p => {
+        // Dipole-dipole interactions
+        const neighbors = spatialGrid.getNeighboringParticles(p);
+        neighbors.forEach(n => {
+          if (p === n) return;
+          const r = n.position.subtract(p.position);
+          const distanceVal = r.length() + 0.1; // Avoid division by zero
+          const dipoleForceScale = 100; // Reduced scaling factor for dipole force
+          const forceMagnitude = (p.magneticMoment.dot(n.magneticMoment)) / Math.pow(distanceVal, 3) * dipoleForceScale;
+          const force = r.normalize().multiplyScalar(forceMagnitude);
+          p.applyForce(force);
+        });
+
+        // Apply magnetic field from wires
+        if (currentFlowing) {
+          const B = calculateMagneticFieldAtPoint(p.position);
+          p.applyMagneticField(B, 1); // The strength is already applied in B
+        }
+
+        p.update(deltaTime);
+      });
+
+      render();
+
+      requestAnimationFrame(simulationStep);
+    }
+
+    requestAnimationFrame(simulationStep);
+
+    // === Rendering Function ===
+    function render() {
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      // === Render Particles ===
+      gl.useProgram(particleProgram);
+
+      // Bind particle buffer and set data
+      const particlePositions = [];
+      particles.forEach(p => {
+        particlePositions.push(p.position.x, p.position.y);
+      });
+      gl.bindBuffer(gl.ARRAY_BUFFER, particleBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(particlePositions), gl.DYNAMIC_DRAW);
+
+      // Enable and set attribute
+      gl.enableVertexAttribArray(particlePositionLocation);
+      gl.vertexAttribPointer(
+        particlePositionLocation,
+        2,
+        gl.FLOAT,
+        false,
+        0,
+        0
+      );
+
+      // Set uniforms
+      gl.uniform2f(particleResolutionLocation, canvas.width, canvas.height);
+      gl.uniform4f(particleColorLocation, 0.0, 1.0, 1.0, 1.0); // Cyan color
+      gl.uniform1f(particlePointSizeLocation, 2.0); // Default particle size
+
+      // Draw particles as points
+      gl.drawArrays(gl.POINTS, 0, particles.length);
+
+      // === Render Wires ===
+      if (wireSegments.length > 0) {
+        gl.useProgram(wireProgram);
+
+        // Flatten wire segments into a single array
+        const wirePositions = [];
+        wireSegments.forEach(seg => {
+          wirePositions.push(seg.start.x, seg.start.y);
+          wirePositions.push(seg.end.x, seg.end.y);
+        });
+
+        // Bind wire buffer and set data
+        gl.bindBuffer(gl.ARRAY_BUFFER, wireBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wirePositions), gl.DYNAMIC_DRAW);
+
+        // Enable and set attribute
+        gl.enableVertexAttribArray(wirePositionLocation);
+        gl.vertexAttribPointer(
+          wirePositionLocation,
+          2,
+          gl.FLOAT,
+          false,
+          0,
+          0
+        );
+
+        // Set uniforms
+        gl.uniform2f(wireResolutionLocation, canvas.width, canvas.height);
+        gl.uniform4f(wireColorLocation, 1.0, 0.5, 0.0, 1.0); // Orange color
+
+        // Draw wires as lines
+        gl.drawArrays(gl.LINES, 0, wireSegments.length * 2);
+      }
+
+      // === Render Terminals ===
+      gl.useProgram(particleProgram);
+
+      // Create a buffer for terminal positions
+      const terminalPositions = [];
+      terminals.forEach(terminal => {
+        terminalPositions.push(terminal.position.x, terminal.position.y);
+      });
+
+      const terminalBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, terminalBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(terminalPositions), gl.DYNAMIC_DRAW);
+
+      // Enable and set attribute
+      gl.enableVertexAttribArray(particlePositionLocation);
+      gl.vertexAttribPointer(
+        particlePositionLocation,
+        2,
+        gl.FLOAT,
+        false,
+        0,
+        0
+      );
+
+      // Set resolution uniform
+      gl.uniform2f(particleResolutionLocation, canvas.width, canvas.height);
+
+      // Draw each terminal with appropriate color and size
+      terminals.forEach((terminal, index) => {
+        if (terminal.type === 'positive') {
+          gl.uniform4f(particleColorLocation, 1.0, 0.0, 0.0, 1.0); // Red
+        } else {
+          gl.uniform4f(particleColorLocation, 0.0, 1.0, 0.0, 1.0); // Green
+        }
+
+        // Adjust point size for terminals
+        gl.uniform1f(particlePointSizeLocation, terminalSize);
+
+        gl.drawArrays(gl.POINTS, index, 1);
+      });
+    }
+  </script>
+</body>
+</html>
+

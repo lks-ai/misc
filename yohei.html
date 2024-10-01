@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebGL 2 Real-Time 3D HyperFractal</title>
+    <style>
+        /* Reset and basic styling */
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%;
+            width: 100%;
+            background-color: #000; /* Black background for better contrast */
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block; /* Removes scrollbars */
+        }
+        /* UI Panel Styling */
+        #ui {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            display: none; /* Hidden by default */
+            width: 300px;
+        }
+        #ui label {
+            display: block;
+            margin-bottom: 10px;
+        }
+        #ui input {
+            width: 100%;
+        }
+        #ui h2 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 18px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <!-- WebGL Canvas -->
+    <canvas id="glCanvas"></canvas>
+
+    <!-- UI Panel for Parameter Controls -->
+    <div id="ui">
+        <h2>HyperFractal Controls</h2>
+        <label>
+            Base Fractal Power:
+            <input type="range" id="power" min="2" max="10" step="0.1" value="8">
+        </label>
+        <label>
+            Max Iterations:
+            <input type="range" id="maxIterations" min="5" max="30" step="1" value="15">
+        </label>
+        <label>
+            Bailout Distance:
+            <input type="range" id="bailout" min="2" max="10" step="0.1" value="4">
+        </label>
+    </div>
+
+    <!-- WebGL and Shader Scripts -->
+    <script type="text/javascript">
+        // Get the canvas element
+        const canvas = document.getElementById('glCanvas');
+
+        // Initialize the WebGL 2 context
+        const gl = canvas.getContext('webgl2');
+        if (!gl) {
+            alert('WebGL 2 is not available in your browser.');
+        }
+
+        // Vertex Shader Source Code
+        const vertexShaderSource = `#version 300 es
+        precision highp float;
+
+        // Vertex attributes
+        in vec4 a_position;
+
+        // Varying to pass to fragment shader
+        out vec2 v_uv;
+
+        void main() {
+            gl_Position = a_position;
+            v_uv = (a_position.xy + 1.0) * 0.5; // Transform from [-1,1] to [0,1]
+        }
+        `;
+
+        // Fragment Shader Source Code with HyperFractal and Glow Effect
+        const fragmentShaderSource = `#version 300 es
+        precision highp float;
+
+        // Uniforms
+        uniform vec2 u_resolution;
+        uniform vec2 u_mouse;
+        uniform float u_time;
+
+        // Fractal parameters
+        uniform float u_power;          // Base fractal power
+        uniform int u_maxIterations;    // Maximum iterations
+        uniform float u_bailout;        // Bailout radius
+        uniform float u_zoom;           // Zoom factor
+
+        // Output color
+        out vec4 outColor;
+
+        // Function to convert HSV to RGB
+        vec3 hsv(float h, float s, float v) {
+            float c = v * s;
+            float h_i = floor(h * 6.0);
+            float f = h * 6.0 - h_i;
+            float p = v - c;
+            float q = v - c * (1.0 - f);
+            float t = v - c * f;
+            if (h_i == 0.0) return vec3(v, t, p);
+            if (h_i == 1.0) return vec3(q, v, p);
+            if (h_i == 2.0) return vec3(p, v, t);
+            if (h_i == 3.0) return vec3(p, q, v);
+            if (h_i == 4.0) return vec3(t, p, v);
+            return vec3(v, p, q);
+        }
+
+        // Signed Distance Function for HyperFractal
+        float hyperFractalSDF(vec3 p) {
+            vec3 z = p;
+            float dr = 1.0;
+            float r = 0.0;
+            float theta, phi;
+
+            // HyperFractal Parameters
+            float n_base = u_power;
+            float A = 2.0;            // Amplitude for fractal power modulation
+            float omega = 0.5;        // Iteration-based modulation frequency
+            float delta = 1.0;        // Time-based modulation frequency
+
+            // Anisotropic Scaling Parameters
+            float Sx = 1.0, Sy = 1.0, Sz = 1.0;
+            float Bx = 0.3, By = 0.3, Bz = 0.3;
+            float alphax = 0.3, alphay = 0.3, alphaz = 0.3;
+            float betax = 0.7, betay = 0.7, betaz = 0.7;
+
+            // Rotational Transformation Parameters
+            float gamma = 3.141592 / 4.0; // 45 degrees in radians
+            float kappa = 0.4;             // Iteration-based rotation frequency
+            float lambda = 0.6;            // Time-based rotation frequency
+
+            // Introduce a separate variable 'c' to represent the initial point
+            vec3 c = p;
+
+            for(int i = 0; i < 100; i++) { // Loop limit to prevent infinite loops
+                if(i >= u_maxIterations) break;
+                r = length(z);
+                if(r > u_bailout) break;
+
+                // Prevent division by zero and clamp to valid range
+                float safe_r = max(r, 0.0001);
+                theta = acos(clamp(z.z / safe_r, -1.0, 1.0));
+                phi = atan(z.y, z.x);
+
+                // Dynamic fractal power
+                float ni = n_base + A * sin(omega * float(i) + delta * u_time);
+
+                // Dynamic rotational angle
+                float theta_i = gamma * sin(kappa * float(i) + lambda * u_time);
+
+                // Apply anisotropic scaling
+                float sx = Sx + Bx * sin(alphax * float(i) + betax * u_time);
+                float sy = Sy + By * sin(alphay * float(i) + betay * u_time);
+                float sz = Sz + Bz * sin(alphaz * float(i) + betaz * u_time);
+
+                // Apply rotation around Y-axis
+                mat3 rotation = mat3(
+                    cos(theta_i), 0.0, sin(theta_i),
+                    0.0,          1.0, 0.0,
+                    -sin(theta_i),0.0, cos(theta_i)
+                );
+                vec3 rotated = rotation * vec3(sin(theta * ni) * cos(phi * ni),
+                                               sin(theta * ni) * sin(phi * ni),
+                                               cos(theta * ni));
+
+                // Apply anisotropic scaling and add the constant 'c'
+                z = vec3(rotated.x * sx, rotated.y * sy, rotated.z * sz) + c;
+
+                // Update derivative
+                dr = pow(r, ni - 1.0) * ni * dr + 1.0;
+            }
+
+            return 0.5 * log(r) * r / dr;
+        }
+
+        // Estimate normal at point p
+        vec3 estimateNormal(vec3 p) {
+            float h = 0.001;
+            return normalize(vec3(
+                hyperFractalSDF(p + vec3(h, 0.0, 0.0)) - hyperFractalSDF(p - vec3(h, 0.0, 0.0)),
+                hyperFractalSDF(p + vec3(0.0, h, 0.0)) - hyperFractalSDF(p - vec3(0.0, h, 0.0)),
+                hyperFractalSDF(p + vec3(0.0, 0.0, h)) - hyperFractalSDF(p - vec3(0.0, 0.0, h))
+            ));
+        }
+
+        void main() {
+            // Normalize pixel coordinates (from -1 to 1)
+            vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+
+            // Camera setup with zoom
+            vec3 ro = vec3(0.0, 0.0, 4.0 / u_zoom); // Ray origin adjusted by zoom
+            vec3 rd = normalize(vec3(uv, -1.5 / u_zoom)); // Ray direction adjusted by zoom
+
+            // Raymarching parameters
+            float totalDistance = 0.0;
+            int steps;
+            float distance;
+            vec3 p;
+            bool hit = false;
+
+            for(steps = 0; steps < u_maxIterations; steps++) {
+                p = ro + rd * totalDistance;
+                distance = hyperFractalSDF(p);
+                if(distance < 0.001) {
+                    hit = true;
+                    break;
+                }
+                if(totalDistance > 20.0) {
+                    break;
+                }
+                totalDistance += distance;
+            }
+
+            // Lighting
+            vec3 color = vec3(0.0);
+            if(hit) {
+                vec3 normal = estimateNormal(p);
+                vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+                float diff = max(dot(normal, lightDir), 0.0);
+                // Dynamic color based on normal and time
+                color = hsv(mod(u_time * 0.1 + normal.y, 1.0), 1.0, diff);
+                // Add some rim lighting
+                float rim = 1.0 - max(dot(normal, -rd), 0.0);
+                color += hsv(0.6, 0.5, rim * 0.5);
+            }
+
+            // Ambient light
+            color += vec3(0.1);
+
+            // Glow Effect: Simple radial gradient based on distance
+            float glow = 1.0 - smoothstep(15.0, 20.0, totalDistance);
+            color += vec3(0.2, 0.4, 0.6) * glow;
+
+            // Output the final color
+            outColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+        }
+        `;
+
+        // Function to compile a shader
+        function compileShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+            if (!success) {
+                console.error('Shader compilation failed:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Function to create the shader program
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            const linked = gl.getProgramParameter(program, gl.LINK_STATUS);
+            if (!linked) {
+                console.error('Program linking failed:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
+
+        // Compile vertex and fragment shaders
+        const vertexShader = compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+        if (!vertexShader || !fragmentShader) {
+            throw new Error('Shader compilation failed');
+        }
+
+        // Create the shader program
+        const program = createProgram(gl, vertexShader, fragmentShader);
+
+        if (!program) {
+            throw new Error('Program creation failed');
+        }
+
+        // Define the rectangle covering the entire canvas
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = new Float32Array([
+            -1.0, -1.0,
+             1.0, -1.0,
+            -1.0,  1.0,
+            -1.0,  1.0,
+             1.0, -1.0,
+             1.0,  1.0,
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+        // Get attribute location for a_position
+        const aPositionLoc = gl.getAttribLocation(program, 'a_position');
+
+        // Enable the attribute and bind the buffer
+        gl.enableVertexAttribArray(aPositionLoc);
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.vertexAttribPointer(aPositionLoc, 2, gl.FLOAT, false, 0, 0);
+
+        // Get uniform locations
+        const uResolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        const uMouseLoc = gl.getUniformLocation(program, 'u_mouse');
+        const uTimeLoc = gl.getUniformLocation(program, 'u_time');
+        const uPowerLoc = gl.getUniformLocation(program, 'u_power');
+        const uMaxIterationsLoc = gl.getUniformLocation(program, 'u_maxIterations');
+        const uBailoutLoc = gl.getUniformLocation(program, 'u_bailout');
+        const uZoomLoc = gl.getUniformLocation(program, 'u_zoom');
+
+        // Variables to store mouse position
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // Event listener for mouse movement
+        window.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = rect.height - (e.clientY - rect.top);
+        });
+
+        // Handle UI controls for fractal parameters
+        const powerSlider = document.getElementById('power');
+        const maxIterationsSlider = document.getElementById('maxIterations');
+        const bailoutSlider = document.getElementById('bailout');
+
+        // Initialize default fractal parameters
+        let fractalPower = parseFloat(powerSlider.value);
+        let fractalMaxIterations = parseInt(maxIterationsSlider.value);
+        let fractalBailout = parseFloat(bailoutSlider.value);
+
+        // Update fractal parameters based on UI input
+        powerSlider.addEventListener('input', () => {
+            fractalPower = parseFloat(powerSlider.value);
+        });
+        maxIterationsSlider.addEventListener('input', () => {
+            fractalMaxIterations = parseInt(maxIterationsSlider.value);
+        });
+        bailoutSlider.addEventListener('input', () => {
+            fractalBailout = parseFloat(bailoutSlider.value);
+        });
+
+        // Resize the canvas to fit the window
+        function resizeCanvas() {
+            const displayWidth  = window.innerWidth;
+            const displayHeight = window.innerHeight;
+
+            if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+                canvas.width = displayWidth;
+                canvas.height = displayHeight;
+                gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+            }
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Toggle UI panel visibility with Spacebar or Enter
+        const uiPanel = document.getElementById('ui');
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'Enter') {
+                e.preventDefault(); // Prevent default behavior (e.g., page scrolling)
+                if (uiPanel.style.display === 'none' || uiPanel.style.display === '') {
+                    uiPanel.style.display = 'block';
+                } else {
+                    uiPanel.style.display = 'none';
+                }
+            }
+        });
+
+        // Use the shader program
+        gl.useProgram(program);
+
+        // Animation loop
+        let startTime = performance.now();
+        function render() {
+            // Calculate elapsed time in seconds
+            let currentTime = performance.now();
+            let elapsedTime = (currentTime - startTime) / 1000.0;
+
+            // Animate fractal power over time (e.g., oscillate between base and base + 2)
+            let animatedPower = fractalPower + Math.sin(elapsedTime * 0.5) * 2.0;
+
+            // Map mouse X to nudge fractal power
+            let powerNudge = (mouseX / canvas.width - 0.5) * 2.0; // Range: -1 to 1
+            let finalPower = animatedPower + powerNudge;
+
+            // Map mouse Y to zoom factor (e.g., 1.0 to 3.0)
+            let zoomFactor = 1.0 + (mouseY / canvas.height) * 2.0;
+
+            // Set the uniform values
+            gl.uniform2f(uResolutionLoc, canvas.width, canvas.height);
+            gl.uniform2f(uMouseLoc, mouseX, mouseY);
+            gl.uniform1f(uTimeLoc, elapsedTime);
+            gl.uniform1f(uPowerLoc, finalPower);
+            gl.uniform1i(uMaxIterationsLoc, fractalMaxIterations);
+            gl.uniform1f(uBailoutLoc, fractalBailout);
+            gl.uniform1f(uZoomLoc, zoomFactor);
+
+            // Clear the canvas
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            // Draw the rectangle
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            // Request the next frame
+            requestAnimationFrame(render);
+        }
+
+        // Start rendering
+        render();
+    </script>
+</body>
+</html>
+

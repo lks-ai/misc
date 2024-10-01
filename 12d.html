@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>12D Fractal Visualization</title>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #debugInfo {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #0f0;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            font-family: monospace;
+            font-size: 14px;
+            border-radius: 5px;
+            max-width: 300px;
+            word-wrap: break-word;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+    <div id="debugInfo">Initializing...</div>
+    
+    <!-- Include dat.GUI via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+    
+    <script type="text/javascript">
+        // Get the canvas and debug info elements
+        const canvas = document.getElementById('glCanvas');
+        const debugInfo = document.getElementById('debugInfo');
+
+        // Resize the canvas to fill the window
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        // Initialize WebGL context
+        let gl = canvas.getContext('webgl');
+        if (!gl) {
+            console.warn('WebGL not supported, trying experimental-webgl');
+            gl = canvas.getContext('experimental-webgl');
+        }
+        if (!gl) {
+            alert('Your browser does not support WebGL');
+            debugInfo.innerText = 'WebGL not supported.';
+        } else {
+            console.log('WebGL initialized successfully.');
+            debugInfo.innerText = 'WebGL initialized. Generating fractal...';
+            resizeCanvas();
+        }
+
+        if (gl) {
+            // Vertex shader program
+            const vsSource = `
+                attribute vec2 aPosition;
+                attribute vec3 aColor;
+                uniform mat3 uMatrix;
+                varying vec3 vColor;
+                void main() {
+                    vec3 position = uMatrix * vec3(aPosition, 1.0);
+                    gl_Position = vec4(position.xy, 0.0, 1.0);
+                    gl_PointSize = 2.0; // Increased point size for visibility
+                    vColor = aColor;
+                }
+            `;
+
+            // Fragment shader program
+            const fsSource = `
+                precision mediump float;
+                varying vec3 vColor;
+                void main() {
+                    gl_FragColor = vec4(vColor, 1.0);
+                }
+            `;
+
+            // Initialize shaders
+            function initShaderProgram(gl, vsSource, fsSource) {
+                const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+                const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+                if (!vertexShader || !fragmentShader) {
+                    console.error('Shader compilation failed.');
+                    return null;
+                }
+
+                const shaderProgram = gl.createProgram();
+                gl.attachShader(shaderProgram, vertexShader);
+                gl.attachShader(shaderProgram, fragmentShader);
+                gl.linkProgram(shaderProgram);
+
+                // Check for linking errors
+                if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+                    console.error('Unable to link the shader program:', gl.getProgramInfoLog(shaderProgram));
+                    return null;
+                }
+
+                return shaderProgram;
+            }
+
+            // Creates a shader of the given type, uploads the source and compiles it.
+            function loadShader(gl, type, source) {
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+
+                // Check for compilation errors
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.error('An error occurred compiling the shaders:', gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+
+                return shader;
+            }
+
+            // Initialize the shader program
+            const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+
+            if (!shaderProgram) {
+                debugInfo.innerText = 'Shader initialization failed. Check console for errors.';
+            } else {
+                // Collect all the info needed to use the shader program.
+                const programInfo = {
+                    program: shaderProgram,
+                    attribLocations: {
+                        position: gl.getAttribLocation(shaderProgram, 'aPosition'),
+                        color: gl.getAttribLocation(shaderProgram, 'aColor'),
+                    },
+                    uniformLocations: {
+                        matrix: gl.getUniformLocation(shaderProgram, 'uMatrix'),
+                    },
+                };
+
+                // Buffers to hold the positions and colors
+                const buffers = initBuffers(gl, programInfo);
+
+                if (buffers) {
+                    debugInfo.innerText = `Fractal generated with ${buffers.numPoints} points. Rendering...`;
+
+                    // Initialize transformation parameters
+                    let zoom = 10.0;
+                    let offsetX = 0.17;
+                    let offsetY = -10.06;
+                    let isDragging = false;
+                    let lastMouseX = 0;
+                    let lastMouseY = 0;
+
+                    // Parameters for higher-dimensional rotations (example: rotating dimensions 0-1 and 2-3)
+                    const rotationParams = {
+                        rotation01: 0, // Rotation angle between dimensions 0 and 1
+                        rotation23: 0, // Rotation angle between dimensions 2 and 3
+                        rotation45: 0, // Rotation angle between dimensions 4 and 5
+                        rotation67: 0, // Rotation angle between dimensions 6 and 7
+                        rotation89: 0, // Rotation angle between dimensions 8 and 9
+                        rotation1011: 0 // Rotation angle between dimensions 10 and 11
+                    };
+
+                    // Add dat.GUI controls
+                    const gui = new dat.GUI();
+                    gui.width = 300;
+                    gui.add(rotationParams, 'rotation01', 0, 360).name('Rotation 0-1 (°)').onChange(updateRotation);
+                    gui.add(rotationParams, 'rotation23', 0, 360).name('Rotation 2-3 (°)').onChange(updateRotation);
+                    gui.add(rotationParams, 'rotation45', 0, 360).name('Rotation 4-5 (°)').onChange(updateRotation);
+                    gui.add(rotationParams, 'rotation67', 0, 360).name('Rotation 6-7 (°)').onChange(updateRotation);
+                    gui.add(rotationParams, 'rotation89', 0, 360).name('Rotation 8-9 (°)').onChange(updateRotation);
+                    gui.add(rotationParams, 'rotation1011', 0, 360).name('Rotation 10-11 (°)').onChange(updateRotation);
+                    gui.close(); // Close the GUI by default
+
+                    // Function to update rotation matrices based on GUI controls
+                    function updateRotation() {
+                        // Precompute rotation matrices for each pair
+                        const rotationMatrix01 = getRotationMatrix(rotationParams.rotation01, 0, 1);
+                        const rotationMatrix23 = getRotationMatrix(rotationParams.rotation23, 2, 3);
+                        const rotationMatrix45 = getRotationMatrix(rotationParams.rotation45, 4, 5);
+                        const rotationMatrix67 = getRotationMatrix(rotationParams.rotation67, 6, 7);
+                        const rotationMatrix89 = getRotationMatrix(rotationParams.rotation89, 8, 9);
+                        const rotationMatrix1011 = getRotationMatrix(rotationParams.rotation1011, 10, 11);
+
+                        // Apply rotations to all points before projection
+                        applyRotations(rotationMatrix01, rotationMatrix23, rotationMatrix45, rotationMatrix67, rotationMatrix89, rotationMatrix1011);
+                        
+                        // Update buffers with rotated points
+                        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(buffers.positions), gl.STATIC_DRAW);
+                        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.color);
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(buffers.colors), gl.STATIC_DRAW);
+                    }
+
+                    // Function to create a rotation matrix for rotating two dimensions in 12D space
+                    function getRotationMatrix(angleDegrees, dim1, dim2) {
+                        const angleRadians = angleDegrees * Math.PI / 180;
+                        const cosA = Math.cos(angleRadians);
+                        const sinA = Math.sin(angleRadians);
+                        const matrix = Array(12).fill(0).map(() => Array(12).fill(0));
+                        for (let i = 0; i < 12; i++) {
+                            matrix[i][i] = 1; // Identity for non-rotated dimensions
+                        }
+                        matrix[dim1][dim1] = cosA;
+                        matrix[dim1][dim2] = -sinA;
+                        matrix[dim2][dim1] = sinA;
+                        matrix[dim2][dim2] = cosA;
+                        return matrix;
+                    }
+
+                    // Function to apply multiple rotation matrices to all points
+                    function applyRotations(rot01, rot23, rot45, rot67, rot89, rot1011) {
+                        for (let i = 0; i < buffers.positions.length; i += 2) {
+                            // Retrieve the original 12D point before projection
+                            const pointIndex = i / 2;
+                            let z = buffers.originalPoints[pointIndex].slice(); // Clone the original 12D point
+
+                            // Apply rotations
+                            z = multiplyMatrixVector(rot01, z);
+                            z = multiplyMatrixVector(rot23, z);
+                            z = multiplyMatrixVector(rot45, z);
+                            z = multiplyMatrixVector(rot67, z);
+                            z = multiplyMatrixVector(rot89, z);
+                            z = multiplyMatrixVector(rot1011, z);
+
+                            // Update the originalPoints with rotated coordinates
+                            buffers.originalPoints[pointIndex] = z;
+
+                            // Re-project to 2D
+                            const projected = projectTo2D(z);
+                            buffers.positions[i] = projected[0];
+                            buffers.positions[i + 1] = projected[1];
+
+                            // Update color based on new position
+                            const color = mapToColor(z, i / 2);
+                            buffers.colors[i] = color[0];
+                            buffers.colors[i + 1] = color[1];
+                            buffers.colors[i + 2] = color[2];
+                        }
+                    }
+
+                    /* // Mouse interaction variables for zoom towards mouse
+                    let zoom = 1.0;
+                    let offsetX = 0.0;
+                    let offsetY = 0.0;
+                    let isDragging = false;
+                    let lastMouseX = 0;
+                    let lastMouseY = 0; */
+
+                    // Add event listeners for mouse interaction
+                    canvas.addEventListener('wheel', (event) => {
+                        event.preventDefault();
+
+                        // Get mouse position in canvas coordinates
+                        const rect = canvas.getBoundingClientRect();
+                        const mouseX = event.clientX - rect.left;
+                        const mouseY = event.clientY - rect.top;
+
+                        // Convert mouse position to normalized device coordinates (-1 to 1)
+                        const ndcX = (mouseX / canvas.width) * 2 - 1;
+                        const ndcY = 1 - (mouseY / canvas.height) * 2;
+
+                        // Calculate world coordinates before zoom
+                        const worldXBefore = (ndcX / (zoom / (canvas.width / canvas.height))) - offsetX;
+                        const worldYBefore = (ndcY / zoom) - offsetY;
+
+                        // Adjust zoom
+                        const zoomFactor = 1.05;
+                        if (event.deltaY < 0) {
+                            zoom *= zoomFactor;
+                        } else {
+                            zoom /= zoomFactor;
+                        }
+
+                        // Calculate world coordinates after zoom
+                        const worldXAfter = (ndcX / (zoom / (canvas.width / canvas.height))) - offsetX;
+                        const worldYAfter = (ndcY / zoom) - offsetY;
+
+                        // Adjust offsets so that the point under the mouse remains the same
+                        offsetX += (worldXBefore - worldXAfter);
+                        offsetY += (worldYBefore - worldYAfter);
+
+                        debugInfo.innerText = `Zoom: ${zoom.toFixed(2)} | OffsetX: ${offsetX.toFixed(2)} | OffsetY: ${offsetY.toFixed(2)}`;
+                    });
+
+                    canvas.addEventListener('mousedown', (event) => {
+                        isDragging = true;
+                        lastMouseX = event.clientX;
+                        lastMouseY = event.clientY;
+                    });
+
+                    canvas.addEventListener('mousemove', (event) => {
+                        if (isDragging) {
+                            const dx = (event.clientX - lastMouseX) / (canvas.width / 2) / zoom;
+                            const dy = (event.clientY - lastMouseY) / (canvas.height / 2) / zoom;
+                            offsetX += dx;
+                            offsetY -= dy;
+                            lastMouseX = event.clientX;
+                            lastMouseY = event.clientY;
+                            debugInfo.innerText = `Zoom: ${zoom.toFixed(2)} | OffsetX: ${offsetX.toFixed(2)} | OffsetY: ${offsetY.toFixed(2)}`;
+                        }
+                    });
+
+                    canvas.addEventListener('mouseup', () => {
+                        isDragging = false;
+                    });
+
+                    canvas.addEventListener('mouseleave', () => {
+                        isDragging = false;
+                    });
+
+                    // Draw the scene repeatedly
+                    function render() {
+                        try {
+                            drawScene(gl, programInfo, buffers, zoom, offsetX, offsetY);
+                        } catch (error) {
+                            console.error('Error during rendering:', error);
+                            debugInfo.innerText = `Rendering Error: ${error.message}`;
+                        }
+                        requestAnimationFrame(render);
+                    }
+                    requestAnimationFrame(render);
+                }
+
+                // Initialize the buffers we'll need.
+                function initBuffers(gl, programInfo) {
+                    try {
+                        // Create a buffer for the positions
+                        const positionBuffer = gl.createBuffer();
+                        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+                        // Generate the fractal points
+                        const pointData = generateFractalPoints();
+
+                        if (pointData.positions.length === 0) {
+                            console.error('No points generated.');
+                            debugInfo.innerText = 'No points generated.';
+                            return null;
+                        }
+
+                        console.log(`Generated ${pointData.numPoints} points.`);
+                        debugInfo.innerText = `Generated ${pointData.numPoints} points. Rendering...`;
+
+                        // Store original 12D points for rotation
+                        const originalPoints = pointData.originalPoints;
+
+                        // Now pass the list of positions into WebGL to build the shape.
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pointData.positions), gl.STATIC_DRAW);
+
+                        // Build the color buffer
+                        const colorBuffer = gl.createBuffer();
+                        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pointData.colors), gl.STATIC_DRAW);
+
+                        return {
+                            position: positionBuffer,
+                            color: colorBuffer,
+                            numPoints: pointData.numPoints,
+                            positions: pointData.positions, // To allow updating
+                            colors: pointData.colors, // To allow updating
+                            originalPoints: originalPoints // To store original 12D points
+                        };
+                    } catch (error) {
+                        console.error('Error initializing buffers:', error);
+                        debugInfo.innerText = 'Error initializing buffers.';
+                        return null;
+                    }
+                }
+
+                // Generate fractal points using the 12D equation
+                function generateFractalPoints() {
+                    const maxIterations = 200000; // Adjust for more or less detail
+                    const logInterval = 50000; // Log progress every 50,000 iterations
+                    const positions = [];
+                    const colors = [];
+                    const originalPoints = []; // To store original 12D points
+
+                    // Initial point in 12D space
+                    let z = new Array(12).fill(0.5);
+
+                    // Define the matrices A_i and vectors t_i
+                    const transformations = getTransformations();
+
+                    for (let i = 0; i < maxIterations; i++) {
+                        // Randomly select a transformation
+                        const idx = Math.floor(Math.random() * transformations.length);
+                        const { A, t } = transformations[idx];
+
+                        // Apply the transformation
+                        z = multiplyMatrixVector(A, z);
+                        z = addVectors(z, t);
+
+                        // Store the original 12D point
+                        originalPoints.push(z.slice()); // Clone the current 12D point
+
+                        // Projection to 2D
+                        const x = projectTo2D(z);
+
+                        // Map to colors
+                        const color = mapToColor(z, i);
+
+                        // Store positions and colors
+                        positions.push(x[0], x[1]);
+                        colors.push(color[0], color[1], color[2]);
+
+                        // Log progress
+                        if ((i + 1) % logInterval === 0) {
+                            console.log(`Generated ${i + 1} / ${maxIterations} points...`);
+                            debugInfo.innerText = `Generating fractal: ${i + 1} / ${maxIterations} points...`;
+                        }
+                    }
+
+                    return {
+                        positions: positions,
+                        colors: colors,
+                        numPoints: positions.length / 2,
+                        originalPoints: originalPoints
+                    };
+                }
+
+                // Define the transformations A_i and t_i
+                function getTransformations() {
+                    const transformations = [];
+
+                    for (let i = 0; i < 4; i++) {
+                        // Create a 12x12 matrix with small random values
+                        const A = [];
+                        for (let j = 0; j < 12; j++) {
+                            A[j] = [];
+                            for (let k = 0; k < 12; k++) {
+                                A[j][k] = (Math.random() - 0.5) * 0.1; // Small values
+                            }
+                        }
+
+                        // Ensure contraction mapping by scaling diagonal elements
+                        for (let j = 0; j < 12; j++) {
+                            A[j][j] = 0.3; // Fixed contraction factor
+                        }
+
+                        // Translation vector
+                        const t = [];
+                        for (let j = 0; j < 12; j++) {
+                            t[j] = (Math.random() - 0.5) * 0.5; // Adjusted for better spread
+                        }
+
+                        transformations.push({ A, t });
+                    }
+
+                    return transformations;
+                }
+
+                // Multiply a 12x12 matrix with a 12D vector
+                function multiplyMatrixVector(A, v) {
+                    const result = new Array(12).fill(0);
+                    for (let i = 0; i < 12; i++) {
+                        for (let j = 0; j < 12; j++) {
+                            result[i] += A[i][j] * v[j];
+                        }
+                    }
+                    return result;
+                }
+
+                // Add two vectors
+                function addVectors(a, b) {
+                    const result = new Array(a.length);
+                    for (let i = 0; i < a.length; i++) {
+                        result[i] = a[i] + b[i];
+                    }
+                    return result;
+                }
+
+                // Project the 12D point to 2D space
+                function projectTo2D(z) {
+                    let x = 0;
+                    let y = 0;
+                    for (let i = 0; i < 6; i++) {
+                        x += Math.sin(z[i]);
+                    }
+                    for (let i = 6; i < 12; i++) {
+                        y += Math.cos(z[i]);
+                    }
+                    // Normalize the projection to fit within [-1, 1]
+                    x /= 6;
+                    y /= 6;
+                    return [x, y];
+                }
+
+                // Map the 12D point and iteration to a color
+                function mapToColor(z, iteration) {
+                    // Normalize colors between 0 and 1 using sine and cosine functions
+                    const r = Math.abs(Math.sin(z[0] + iteration * 0.0001));
+                    const g = Math.abs(Math.cos(z[6] + iteration * 0.0001));
+                    const b = Math.abs(Math.sin(z[11] + iteration * 0.0001));
+                    return [r, g, b];
+                }
+
+                // Draw the scene
+                function drawScene(gl, programInfo, buffers, zoom, offsetX, offsetY) {
+                    gl.clearColor(0, 0, 0, 1); // Clear to black, fully opaque
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+
+                    // Use the shader program
+                    gl.useProgram(programInfo.program);
+
+                    // Bind the position buffer.
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+                    gl.vertexAttribPointer(
+                        programInfo.attribLocations.position,
+                        2,          // numComponents
+                        gl.FLOAT,   // type
+                        false,      // normalize
+                        0,          // stride
+                        0           // offset
+                    );
+                    gl.enableVertexAttribArray(programInfo.attribLocations.position);
+
+                    // Bind the color buffer.
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.color);
+                    gl.vertexAttribPointer(
+                        programInfo.attribLocations.color,
+                        3,          // numComponents
+                        gl.FLOAT,   // type
+                        false,      // normalize
+                        0,          // stride
+                        0           // offset
+                    );
+                    gl.enableVertexAttribArray(programInfo.attribLocations.color);
+
+                    // Set the transformation matrix
+                    const aspectRatio = gl.canvas.width / gl.canvas.height;
+                    const scaleX = zoom / aspectRatio;
+                    const scaleY = zoom;
+
+                    const matrix = [
+                        scaleX, 0,        0,
+                        0,      scaleY,   0,
+                        offsetX, offsetY, 1
+                    ];
+
+                    gl.uniformMatrix3fv(programInfo.uniformLocations.matrix, false, matrix);
+
+                    // Draw the points
+                    gl.drawArrays(gl.POINTS, 0, buffers.numPoints);
+                }
+            }
+
+            // Closing brace for if (gl) { ... }
+        }
+        </script>
+    </body>
+</html>

@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Simple 3D Modeler</title>
+<style>
+  body { margin: 0; overflow: hidden; background-color: #2b2b2b; }
+  #toolbar {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: #fff;
+    font-family: sans-serif;
+    user-select: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+  }
+  #toolbar button {
+    margin-right: 5px;
+    padding: 5px 10px;
+    background-color: #3c3c3c;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  #toolbar button:hover {
+    background-color: #4c4c4c;
+  }
+  #toolbar button.active {
+    background-color: #1e90ff;
+  }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="modeButton">Mode: Vertex</button>
+  <button id="extrudeButton">Extrude Face</button>
+  <button id="createCubeButton">Create Cube</button>
+  <button id="createSphereButton">Create Sphere</button>
+  <button id="createCylinderButton">Create Cylinder</button>
+</div>
+<!-- Import map to resolve bare module specifiers -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+    "three/examples/jsm/controls/OrbitControls.js": "https://unpkg.com/three@0.152.2/examples/jsm/controls/OrbitControls.js",
+    "three/examples/jsm/controls/TransformControls.js": "https://unpkg.com/three@0.152.2/examples/jsm/controls/TransformControls.js"
+  }
+}
+</script>
+<!-- Use type="module" for ES6 module support -->
+<script type="module">
+  // Importing modules using bare specifiers, resolved by the import map
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+  import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+
+  let scene, camera, renderer, orbitControls, transformControls;
+  let objects = [], raycaster, mouse, selected, selectionMode;
+  let helperObjects = [];
+  let isShiftDown = false;
+
+  init();
+  animate();
+
+  function init() {
+    // Scene and Camera
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x2b2b2b);
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(5, 5, 5);
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Controls
+    orbitControls = new OrbitControls(camera, renderer.domElement);
+    transformControls = new TransformControls(camera, renderer.domElement);
+    scene.add(transformControls);
+
+    // Light
+    const ambientLight = new THREE.AmbientLight(0x404040);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 7.5);
+    scene.add(directionalLight);
+
+    // Grid Helper
+    const gridHelper = new THREE.GridHelper(20, 20);
+    scene.add(gridHelper);
+
+    // Raycaster and Mouse
+    raycaster = new THREE.Raycaster();
+    mouse = new THREE.Vector2();
+
+    // Selection
+    selected = null;
+    selectionMode = 'vertex'; // 'vertex' or 'face'
+
+    // Initial Mesh (Cube)
+    createPrimitive('cube');
+
+    // Event Listeners
+    window.addEventListener('resize', onWindowResize, false);
+    renderer.domElement.addEventListener('pointerdown', onPointerDown, false);
+    document.getElementById('modeButton').addEventListener('click', toggleSelectionMode, false);
+    document.getElementById('extrudeButton').addEventListener('click', extrudeSelectedFace, false);
+    document.getElementById('createCubeButton').addEventListener('click', () => createPrimitive('cube'), false);
+    document.getElementById('createSphereButton').addEventListener('click', () => createPrimitive('sphere'), false);
+    document.getElementById('createCylinderButton').addEventListener('click', () => createPrimitive('cylinder'), false);
+
+    transformControls.addEventListener('change', onTransformChange);
+    transformControls.addEventListener('dragging-changed', function (event) {
+      orbitControls.enabled = !event.value;
+    });
+
+    // Keyboard Events
+    window.addEventListener('keydown', function (event) {
+      isShiftDown = event.shiftKey;
+    }, false);
+
+    window.addEventListener('keyup', function (event) {
+      isShiftDown = event.shiftKey;
+    }, false);
+  }
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  function toggleSelectionMode() {
+    selectionMode = selectionMode === 'vertex' ? 'face' : 'vertex';
+    document.getElementById('modeButton').innerText = 'Mode: ' + (selectionMode.charAt(0).toUpperCase() + selectionMode.slice(1));
+    clearSelection();
+  }
+
+  function onPointerDown(event) {
+    event.preventDefault();
+    mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
+    mouse.y = - (event.clientY / renderer.domElement.clientHeight) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    if (selectionMode === 'vertex') {
+      selectVertex();
+    } else {
+      selectFace();
+    }
+  }
+
+  function selectVertex() {
+    const intersects = [];
+    objects.forEach(mesh => {
+      const positions = mesh.geometry.attributes.position.array;
+      for (let i = 0; i < positions.length; i += 3) {
+        const vertex = new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]);
+        const worldVertex = mesh.localToWorld(vertex.clone());
+        const distance = raycaster.ray.distanceToPoint(worldVertex);
+        if (distance < 0.1) {
+          intersects.push({ mesh, index: i / 3, point: worldVertex });
+        }
+      }
+    });
+
+    if (intersects.length > 0) {
+      const intersect = intersects[0];
+      selectVertexByIndex(intersect.mesh, intersect.index);
+    }
+  }
+
+  function selectVertexByIndex(mesh, index) {
+    clearSelection();
+    selected = { type: 'vertex', mesh: mesh, index: index };
+    const helper = createVertexHelper(mesh, index);
+    helperObjects.push(helper);
+    scene.add(helper);
+    transformControls.attach(helper);
+  }
+
+  function createVertexHelper(mesh, index) {
+    const geometry = new THREE.SphereGeometry(0.05);
+    const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    const helper = new THREE.Mesh(geometry, material);
+    const positions = mesh.geometry.attributes.position.array;
+    const vertex = new THREE.Vector3(
+      positions[index * 3],
+      positions[index * 3 + 1],
+      positions[index * 3 + 2]
+    );
+    helper.position.copy(mesh.localToWorld(vertex.clone()));
+    helper.userData.mesh = mesh;
+    helper.userData.vertexIndex = index;
+    return helper;
+  }
+
+  function selectFace() {
+    const intersects = raycaster.intersectObjects(objects);
+    if (intersects.length > 0) {
+      const intersect = intersects[0];
+      selectFaceByIndex(intersect.object, intersect.faceIndex);
+    }
+  }
+
+  function selectFaceByIndex(mesh, faceIndex) {
+    clearSelection();
+    selected = { type: 'face', mesh: mesh, index: faceIndex };
+    const helper = createFaceHelper(mesh, faceIndex);
+    helperObjects.push(helper);
+    scene.add(helper);
+    transformControls.attach(helper);
+  }
+
+  function createFaceHelper(mesh, faceIndex) {
+    const geometry = new THREE.SphereGeometry(0.05);
+    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const helper = new THREE.Mesh(geometry, material);
+
+    const position = new THREE.Vector3();
+    const positions = mesh.geometry.attributes.position.array;
+    const indices = mesh.geometry.index.array;
+
+    const a = indices[faceIndex * 3];
+    const b = indices[faceIndex * 3 + 1];
+    const c = indices[faceIndex * 3 + 2];
+
+    const va = new THREE.Vector3(
+      positions[a * 3],
+      positions[a * 3 + 1],
+      positions[a * 3 + 2]
+    );
+    const vb = new THREE.Vector3(
+      positions[b * 3],
+      positions[b * 3 + 1],
+      positions[b * 3 + 2]
+    );
+    const vc = new THREE.Vector3(
+      positions[c * 3],
+      positions[c * 3 + 1],
+      positions[c * 3 + 2]
+    );
+    position.copy(va).add(vb).add(vc).divideScalar(3);
+
+    helper.position.copy(mesh.localToWorld(position.clone()));
+    helper.userData.mesh = mesh;
+    helper.userData.faceIndex = faceIndex;
+    helper.userData.originalPosition = helper.position.clone();
+    return helper;
+  }
+
+  function onTransformChange() {
+    if (!selected) return;
+
+    const helper = transformControls.object;
+    const mesh = helper.userData.mesh;
+
+    if (selected.type === 'vertex') {
+      const positions = mesh.geometry.attributes.position.array;
+      const index = helper.userData.vertexIndex;
+      const localPosition = mesh.worldToLocal(helper.position.clone());
+      positions[index * 3] = localPosition.x;
+      positions[index * 3 + 1] = localPosition.y;
+      positions[index * 3 + 2] = localPosition.z;
+      mesh.geometry.attributes.position.needsUpdate = true;
+      mesh.geometry.computeVertexNormals();
+    } else if (selected.type === 'face') {
+      const faceIndex = helper.userData.faceIndex;
+      const indices = mesh.geometry.index.array;
+      const positions = mesh.geometry.attributes.position.array;
+      const a = indices[faceIndex * 3];
+      const b = indices[faceIndex * 3 + 1];
+      const c = indices[faceIndex * 3 + 2];
+
+      const offset = helper.position.clone().sub(helper.userData.originalPosition);
+      helper.userData.originalPosition.copy(helper.position);
+
+      const vertexIndices = [a, b, c];
+      vertexIndices.forEach(i => {
+        const vertex = new THREE.Vector3(
+          positions[i * 3],
+          positions[i * 3 + 1],
+          positions[i * 3 + 2]
+        );
+        vertex.add(mesh.worldToLocal(offset.clone()));
+        positions[i * 3] = vertex.x;
+        positions[i * 3 + 1] = vertex.y;
+        positions[i * 3 + 2] = vertex.z;
+      });
+
+      mesh.geometry.attributes.position.needsUpdate = true;
+      mesh.geometry.computeVertexNormals();
+    }
+  }
+
+  function clearSelection() {
+    if (transformControls.object) transformControls.detach();
+    helperObjects.forEach(helper => scene.remove(helper));
+    helperObjects = [];
+    selected = null;
+  }
+
+  function extrudeSelectedFace() {
+    if (selected && selected.type === 'face') {
+      const mesh = selected.mesh;
+      const faceIndex = selected.index;
+      const positions = Array.from(mesh.geometry.attributes.position.array);
+      const indices = Array.from(mesh.geometry.index.array);
+
+      const a = indices[faceIndex * 3];
+      const b = indices[faceIndex * 3 + 1];
+      const c = indices[faceIndex * 3 + 2];
+
+      const va = new THREE.Vector3(positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]);
+      const vb = new THREE.Vector3(positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]);
+      const vc = new THREE.Vector3(positions[c * 3], positions[c * 3 + 1], positions[c * 3 + 2]);
+
+      const faceNormal = new THREE.Vector3().crossVectors(
+        new THREE.Vector3().subVectors(vb, va),
+        new THREE.Vector3().subVectors(vc, va)
+      ).normalize();
+
+      const offset = faceNormal.multiplyScalar(0.5);
+
+      const newVa = va.clone().add(offset);
+      const newVb = vb.clone().add(offset);
+      const newVc = vc.clone().add(offset);
+
+      const newIndex = positions.length / 3;
+      positions.push(newVa.x, newVa.y, newVa.z);
+      positions.push(newVb.x, newVb.y, newVb.z);
+      positions.push(newVc.x, newVc.y, newVc.z);
+
+      // Create side faces
+      indices.push(a, b, newIndex + 1);
+      indices.push(a, newIndex + 1, newIndex);
+      indices.push(b, c, newIndex + 2);
+      indices.push(b, newIndex + 2, newIndex + 1);
+      indices.push(c, a, newIndex);
+      indices.push(c, newIndex, newIndex + 2);
+
+      // Top face
+      indices.push(newIndex, newIndex + 1, newIndex + 2);
+
+      // Update geometry
+      mesh.geometry.dispose();
+      mesh.geometry = new THREE.BufferGeometry();
+      mesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      mesh.geometry.setIndex(indices);
+      mesh.geometry.computeVertexNormals();
+
+      clearSelection();
+    }
+  }
+
+  function createPrimitive(type) {
+    let geometry;
+    switch (type) {
+      case 'cube':
+        geometry = new THREE.BoxGeometry(1, 1, 1);
+        break;
+      case 'sphere':
+        geometry = new THREE.SphereGeometry(0.5, 16, 16);
+        break;
+      case 'cylinder':
+        geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 16);
+        break;
+    }
+    geometry = geometry.toNonIndexed(); // Ensure unique vertices
+    const material = new THREE.MeshStandardMaterial({ color: 0x0077ff, flatShading: true });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(0, 0.5, 0);
+    scene.add(mesh);
+    objects.push(mesh);
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  }
+</script>
+</body>
+</html>
+
