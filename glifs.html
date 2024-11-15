@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Fractal Particle System with WebGL and Advanced Audio Reactivity</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #000; 
+            font-family: Arial, sans-serif;
+            touch-action: none; /* Prevent default touch actions */
+        }
+        canvas { 
+            display: block; 
+            width: 100vw;
+            height: 100vh;
+        }
+        #startAudio {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            padding: 12px 24px;
+            font-size: 18px;
+            z-index: 10;
+            cursor: pointer;
+            background-color: rgba(255, 255, 255, 0.8);
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        #startAudio:disabled {
+            background-color: rgba(200, 200, 200, 0.8);
+            cursor: not-allowed;
+        }
+        #menuButton {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            z-index: 10;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+        .bar {
+            width: 100%;
+            height: 5px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 2px;
+            transition: all 0.3s;
+        }
+        /* Menu Styles */
+        #menu {
+            position: absolute;
+            top: 0;
+            right: -250px; /* Hidden by default */
+            width: 250px;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: 60px 20px 20px 20px;
+            box-sizing: border-box;
+            transition: right 0.3s;
+            z-index: 9;
+            overflow-y: auto;
+        }
+        #menu.open {
+            right: 0;
+        }
+        #menu h2 {
+            margin-top: 0;
+            text-align: center;
+            font-size: 24px;
+            margin-bottom: 30px;
+        }
+        .menu-section {
+            margin-bottom: 20px;
+        }
+        .menu-section h3 {
+            margin-bottom: 10px;
+            font-size: 18px;
+            border-bottom: 1px solid #555;
+            padding-bottom: 5px;
+        }
+        .menu-section button, .menu-section select, .menu-section input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+        }
+        .menu-section button {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .menu-section button:hover {
+            background-color: rgba(255, 255, 255, 0.4);
+        }
+        .menu-section select, .menu-section input[type="range"] {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: #fff;
+        }
+        /* Responsive Adjustments */
+        @media (max-width: 600px) {
+            #startAudio {
+                padding: 10px 16px;
+                font-size: 16px;
+            }
+            #menuButton {
+                width: 35px;
+                height: 35px;
+            }
+            .bar {
+                height: 4px;
+            }
+            #menu {
+                width: 200px;
+            }
+            #menu h2 {
+                font-size: 20px;
+                padding: 50px 20px 20px 20px;
+            }
+            .menu-section h3 {
+                font-size: 16px;
+            }
+            .menu-section button, .menu-section select, .menu-section input {
+                padding: 8px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button id="startAudio">Start Audio</button>
+    <div id="menuButton" aria-label="Menu" role="button" tabindex="0">
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+    </div>
+    <div id="menu" aria-hidden="true">
+        <h2>Settings</h2>
+        <div class="menu-section">
+            <h3>Transform Shapes</h3>
+            <button data-transform="line">Line Transforms (1)</button>
+            <button data-transform="hexagon">Hexagon Transforms (2)</button>
+            <button data-transform="tetra">Tetrahedron Transforms (3)</button>
+            <button data-transform="octa">Octahedron Transforms (4)</button>
+            <button data-transform="cube">Cube Transforms (5)</button>
+            <button data-transform="tri">Triangle Transforms (6)</button>
+            <button data-transform="icosahedron">Icosahedron Transforms (7)</button>
+            <button data-transform="golden">Golden Transforms (8)</button>
+            <button data-transform="poly">Irregular 2D Polygon (9)</button>
+        </div>
+        <div class="menu-section">
+            <h3>Velocity Control</h3>
+            <button id="increaseVelocity">Increase Velocity (+)</button>
+            <button id="decreaseVelocity">Decrease Velocity (-)</button>
+        </div>
+        <div class="menu-section">
+            <h3>Particle Size</h3>
+            <button id="changeParticleSize">Change Size (*)</button>
+        </div>
+        <div class="menu-section">
+            <h3>Audio Mix Mode</h3>
+            <button id="toggleAudioMixMode">Toggle Mode (M)</button>
+        </div>
+        <div class="menu-section">
+            <h3>Pause/Resume</h3>
+            <button id="togglePause">Pause/Resume (Space)</button>
+        </div>
+    </div>
+    <canvas id="glCanvas"></canvas>
+
+    <script>
+    // Vertex Shader Source
+    const vertexShaderSource = `
+    attribute vec3 aPosition;
+    attribute vec3 aColor; // Color attribute
+    uniform mat4 uModelViewMatrix;
+    uniform mat4 uProjectionMatrix;
+    uniform float uPointSize;
+    varying vec3 vColor; // Varying variable to pass color to fragment shader
+    
+    void main(void) {
+        gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+        gl_PointSize = uPointSize;
+        vColor = aColor; // Pass color to fragment shader
+    }
+    `;
+    
+    // Fragment Shader Source
+    const fragmentShaderSource = `
+    precision mediump float;
+    varying vec3 vColor; // Received color from vertex shader
+    
+    void main(void) {
+        float dist = distance(gl_PointCoord, vec2(0.5, 0.5));
+        if (dist > 0.5) discard; // Discard pixels outside the circle
+        gl_FragColor = vec4(vColor, 1.0); // Apply color with full opacity
+    }
+    `;
+    
+    // Initialize WebGL
+    function initWebGL(canvas) {
+        const gl = canvas.getContext("webgl");
+        if (!gl) {
+            alert("WebGL not supported, falling back on experimental-webgl");
+            return canvas.getContext("experimental-webgl");
+        }
+        return gl;
+    }
+    
+    // Compile Shader
+    function compileShader(gl, source, type) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+        if (!success) {
+            console.error("Could not compile shader:", gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        return shader;
+    }
+    
+    // Link Program
+    function createProgram(gl, vertexSource, fragmentSource) {
+        const vertexShader = compileShader(gl, vertexSource, gl.VERTEX_SHADER);
+        const fragmentShader = compileShader(gl, fragmentSource, gl.FRAGMENT_SHADER);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+        if (!success) {
+            console.error("Program failed to link:", gl.getProgramInfoLog(program));
+            gl.deleteProgram(program);
+            return null;
+        }
+        return program;
+    }
+
+    // Precision utility
+    function precisionCut(value, precision) {
+        if (precision == -1) return value;
+        const factor = Math.pow(10, precision);
+        return Math.trunc(value * factor) / factor;
+    }
+    
+    // AffineTransform Class with Color
+    class AffineTransform {
+        constructor(a, b, c, d, e, f, g, h, k, tx, ty, tz, color = [1.0, 1.0, 1.0]) {
+            // Original 3x3 Affine Transformation Matrix
+            this.originalMatrix = new Float32Array([
+                a, b, c,
+                d, e, f,
+                g, h, k
+            ]);
+
+            // Translation components
+            this.tx = tx;
+            this.ty = ty;
+            this.tz = tz;
+
+            // Initialize dynamic transformation grid and velocity
+            this.caGrid = new Float32Array(9);
+            this.caVel = new Float32Array(9);
+            for (let i = 0; i < 9; i++) {
+                this.caGrid[i] = 0.0;
+                this.caVel[i] = 0.0;
+            }
+
+            // Color associated with this transform
+            this.color = color; // [r, g, b]
+
+            // Parameters for evolution
+            this.p = 0.0000001; // velocity scale
+            this.m = 0.8; // maximum absolute value
+            this.q = 0.4; // velocity damping
+            this.s = 1.2; // Separation rule coefficient of p
+
+            // CA Parameters
+            this.sepAvg = false;
+            this.neighborhood = [[-1, 0],[0,-1],[1,0],[0,1]];
+        }
+
+        updateParams(p, m, q, s) {
+            this.p = p;
+            this.m = m;
+            this.q = q;
+            this.s = s;
+        }
+
+        /**
+         * Evolves the dynamic transformation grid using randomized momentum-driven interpolation.
+         * @param {number} gain - The overall audio gain influencing the evolution.
+         */
+        evolve(gain) {
+            const newGrid = new Float32Array(9);
+            const newVel = new Float32Array(9);
+
+            const sep = this.p * this.s;
+
+            for (let i = 0; i < 9; i++) {
+                const curVal = this.caGrid[i];
+                const curVel = this.caVel[i];
+
+                const row = Math.floor(i / 3);
+                const col = i % 3;
+    
+                // Update velocity with small random perturbation scaled by gain
+                newVel[i] = curVel + ((Math.random() * 2 - 1) * this.p * gain);
+
+                // Apply intra-layer CA rules for equidistance: use von neumann neighborhood. over 3x3 affine transforms
+                // Get overall deltas
+                if (this.sepAvg){
+                    let total = 0;
+                    let tempv = [];
+                    for (let n = 0; n < 4; n++){
+                        const neighborRow = (row + this.neighborhood[n][1] + 3) % 3;
+                        const neighborCol = (col + this.neighborhood[n][0] + 3) % 3;
+                        const neighborIndex = neighborRow * 3 + neighborCol;
+                        const neighborValue = this.caGrid[neighborIndex];
+
+                        total += neighborValue;
+                        tempv[n] = neighborValue;
+                    }
+                    // Avg based on n=4
+                    total *= 0.25;
+                    // Adjust on all value deltas
+                    for (let n = 0; n < 4; n++){
+                        let m = total - tempv[n];
+                        newVel[i] += m * sep;
+                    }
+                }
+
+                // Update value based on velocity
+                let nY = curVal + newVel[i];
+
+                // Clamp the value to [-m, m] and invert velocity if limits are exceeded
+                if (nY > this.m) {
+                    nY = this.m;
+                    newVel[i] = curVel * -this.q;
+                }
+                if (nY < -this.m) {
+                    nY = -this.m;
+                    newVel[i] = curVel * -this.q;
+                }
+
+                newGrid[i] = nY;
+            }
+
+            // Update the grid and velocity for the next iteration
+            this.caGrid = newGrid;
+            this.caVel = newVel;
+        }
+
+        /**
+         * Applies the affine transformation to a given point and returns the transformed point and color.
+         * @param {Object} point - The point to transform with properties x, y, z.
+         * @param {Float32Array} audioMatrix - The array containing audio influence for each matrix element.
+         * @param {number} gain - The overall audio gain.
+         */
+        apply(point, audioMatrix, gain, audioMixMode, globalPrecision = -1) {
+            // Combine the original matrix with the dynamic grid scaled by gain and audioMatrix
+            const combinedMatrix = new Float32Array(9);
+            for (let i = 0; i < 9; i++) {
+                if (audioMixMode == 0){
+                    combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * 0.4 * gain) + (audioMatrix[i] * -0.8);
+                } else if (audioMixMode == 1){
+                    combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * audioMatrix[i]);
+                } else if (audioMixMode == 2){
+                    combinedMatrix[i] = this.originalMatrix[i] + audioMatrix[i];
+                }
+            }
+
+            // Perform the affine transformation
+            const x = point.x, y = point.y, z = point.z;
+            const transformedPoint = {
+                x: precisionCut(combinedMatrix[0] * x + combinedMatrix[1] * y + combinedMatrix[2] * z + this.tx, globalPrecision),
+                y: precisionCut(combinedMatrix[3] * x + combinedMatrix[4] * y + combinedMatrix[5] * z + this.ty, globalPrecision),
+                z: precisionCut(combinedMatrix[6] * x + combinedMatrix[7] * y + combinedMatrix[8] * z + this.tz, globalPrecision)
+            };
+
+            // Return both the transformed point and the transform's color
+            return {
+                position: transformedPoint,
+                color: this.color
+            };
+        }
+        scale(value) {
+            this.tx *= value;
+            this.ty *= value;
+            this.tz *= value;
+        }
+        translate(x, y, z) {
+            this.tx += x;
+            this.ty += y;
+            this.tz += z;
+        }
+    }
+
+    // Particle System Class
+    class ParticleSystem {
+        constructor(maxParticles, transforms) {
+            this.maxParticles = maxParticles;
+            this.transforms = transforms;
+            this.positions = new Float32Array(maxParticles * 3);
+            this.colors = new Float32Array(maxParticles * 3); // RGB colors
+            // Initialize all particles to origin and color to black
+            for (let i = 0; i < maxParticles; i++) {
+                this.positions[3 * i] = 0;
+                this.positions[3 * i + 1] = 0;
+                this.positions[3 * i + 2] = 0;
+                this.colors[3 * i] = 0;
+                this.colors[3 * i + 1] = 0;
+                this.colors[3 * i + 2] = 0;
+            }
+            this.currentIndex = 0;
+
+            // Global Parameters for momentum simulation
+            this.p = 0.0000001; // velocity scale
+            this.m = 0.75; // maximum absolute value
+            this.q = 0.4; // velocity damping during clipping
+            this.s = 1000.0; // separation coefficient of p for CA
+            this.paused = true; // allows pausing of transform evolutions
+
+            // Transform params
+            this.precision = -1;
+            this.audioMixMode = 0;
+            this.sepAvg = false;
+        }
+
+        /**
+         * Iterates the particle system, updating positions and colors based on transformations and audio input.
+         * @param {Float32Array} audioMatrix - The array containing audio influence for each matrix element.
+         * @param {number} gain - The overall audio gain.
+         */
+        iterate(audioMatrix, gain) {
+            for (let i = 0; i < 1000; i++) { // Adjust iterations per frame for performance
+                const transform = this.transforms[Math.floor(Math.random() * this.transforms.length)];
+                transform.sepAvg = this.sepAvg;
+                transform.updateParams(this.p, this.m, this.q, this.s);
+                // Evolve the dynamic transformation grid with gain
+                if (!this.paused) transform.evolve(gain);
+                const idx = this.currentIndex % this.maxParticles;
+                const point = {
+                    x: this.positions[3 * idx],
+                    y: this.positions[3 * idx + 1],
+                    z: this.positions[3 * idx + 2]
+                };
+                const transformed = transform.apply(point, audioMatrix, gain, this.audioMixMode, this.precision);
+                const newPoint = transformed.position;
+                const transformColor = transformed.color;
+
+                // Update position
+                this.positions[3 * idx] = newPoint.x;
+                this.positions[3 * idx + 1] = newPoint.y;
+                this.positions[3 * idx + 2] = newPoint.z;
+
+                // Update color by interpolating current color towards transform's color
+                const alpha = 0.3; // Blending factor (adjust as needed)
+                this.colors[3 * idx] = this.colors[3 * idx] * (1 - alpha) + transformColor[0] * alpha;
+                this.colors[3 * idx + 1] = this.colors[3 * idx + 1] * (1 - alpha) + transformColor[1] * alpha;
+                this.colors[3 * idx + 2] = this.colors[3 * idx + 2] * (1 - alpha) + transformColor[2] * alpha;
+
+                this.currentIndex++;
+            }
+        }
+    }
+
+    // Matrix Utilities
+    function identity() {
+        return [1, 0, 0, 0,
+                0,1,0,0,
+                0,0,1,0,
+                0,0,0,1];
+    }
+
+    function multiply(a, b) {
+        let result = new Array(16);
+        for(let row=0; row<4; row++) {
+            for(let col=0; col<4; col++) {
+                result[4*row + col] =
+                    a[4*row + 0] * b[0 + col] +
+                    a[4*row + 1] * b[4 + col] +
+                    a[4*row + 2] * b[8 + col] +
+                    a[4*row + 3] * b[12 + col];
+            }
+        }
+        return result;
+    }
+
+    function perspective(fov, aspect, near, far) {
+        const f = 1.0 / Math.tan(fov / 2);
+        let result = new Array(16).fill(0);
+        result[0] = f / aspect;
+        result[5] = f;
+        result[10] = (far + near) / (near - far);
+        result[11] = -1;
+        result[14] = (2 * far * near) / (near - far);
+        return result;
+    }
+
+    function rotateX(angle) {
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        return [
+            1, 0, 0, 0,
+            0, c, -s,0,
+            0, s, c,0,
+            0,0,0,1
+        ];
+    }
+
+    function rotateY(angle) {
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        return [
+            c, 0, s,0,
+            0,1,0,0,
+            -s,0, c,0,
+            0,0,0,1
+        ];
+    }
+
+    function translate(x, y, z) {
+        return [
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            x,y,z,1
+        ];
+    }
+
+    // Main Function
+    window.onload = function() {
+        const canvas = document.getElementById("glCanvas");
+        const startAudioButton = document.getElementById("startAudio");
+        const menuButton = document.getElementById("menuButton");
+        const menu = document.getElementById("menu");
+        const menuButtons = menu.querySelectorAll('button[data-transform]');
+        const increaseVelocityBtn = document.getElementById("increaseVelocity");
+        const decreaseVelocityBtn = document.getElementById("decreaseVelocity");
+        const changeParticleSizeBtn = document.getElementById("changeParticleSize");
+        const toggleAudioMixModeBtn = document.getElementById("toggleAudioMixMode");
+        const togglePauseBtn = document.getElementById("togglePause");
+
+        // Set canvas dimensions
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+
+        const gl = initWebGL(canvas);
+        if (!gl) {
+            return;
+        }
+
+        // Create Shader Program
+        const program = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+        gl.useProgram(program);
+
+        // Get Attribute and Uniform Locations
+        const aPosition = gl.getAttribLocation(program, "aPosition");
+        const aColor = gl.getAttribLocation(program, "aColor"); // Get color attribute location
+        const uModelViewMatrix = gl.getUniformLocation(program, "uModelViewMatrix");
+        const uProjectionMatrix = gl.getUniformLocation(program, "uProjectionMatrix");
+        const uPointSize = gl.getUniformLocation(program, "uPointSize");
+
+        // Changed maxparticles to be used in later calcs
+        const maxParticles = 4000; // Adjust as needed
+        let particleSize = 3.0;
+
+        // Create Buffer for Particle Positions
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        // Initialize with zeros
+        gl.bufferData(gl.ARRAY_BUFFER, 4 * 3 * maxParticles, gl.DYNAMIC_DRAW); // Allocate space for positions
+
+        gl.enableVertexAttribArray(aPosition);
+        gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+
+        // Create Buffer for Particle Colors
+        const colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        // Initialize with zeros (black)
+        gl.bufferData(gl.ARRAY_BUFFER, 4 * 3 * maxParticles, gl.DYNAMIC_DRAW); // Allocate space for colors
+
+        gl.enableVertexAttribArray(aColor);
+        gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+
+        // Set Point Size
+        gl.uniform1f(uPointSize, particleSize);
+
+        // Setup Projection Matrix
+        const fov = 45 * Math.PI / 180; // in radians
+        let aspect = canvas.width / canvas.height;
+        const near = 0.1;
+        const far = 1000.0;
+        let projectionMatrix = perspective(fov, aspect, near, far);
+        gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+
+        // Setup ModelView Matrix
+        let modelViewMatrix = identity();
+        gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
+
+        // Quick Transform Utilities
+        function shapeScale(transformArray, scale) {
+            for (let i = 0; i < transformArray.length; i++){
+                transformArray[i].scale(scale);
+            }
+        }
+
+        function shapeTranslate(transformArray, x, y, z) {
+            for (let i = 0; i < transformArray.length; i++){
+                transformArray[i].translate(x, y, z);
+            }
+        }
+
+        // Golden ratio
+        const phi = (1 + Math.sqrt(5)) / 2;
+
+        // Normalize the coordinates
+        const length = Math.sqrt(1 + phi * phi); // Approximately 1.902
+
+        // Helper function to normalize coordinates
+        function normalize(x, y, z) {
+            return {
+                x: x / length,
+                y: y / length,
+                z: z / length
+            };
+        }
+
+        // Define Affine Transformations for a 3D Sierpinski Tetrahedron (as an example)
+        const tetraTransforms = [
+            new AffineTransform(
+                0.5, 0.0, 0.0,
+                0.0, 0.5, 0.0,
+                0.0, 0.0, 0.5,
+                0.0, 0.0, 0.0,
+                [1.0, 0.0, 0.0] // Full Red
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0,
+                0.0, 0.5, 0.0,
+                0.0, 0.0, 0.5,
+                1.0, 0.0, 0.0,
+                [0.0, 0.0, 1.0] // Full Blue
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0,
+                0.0, 0.5, 0.0,
+                0.0, 0.0, 0.5,
+                0.5, Math.sqrt(3)/2, 0.0,
+                [0.0, 1.0, 0.0] // Full Green
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0,
+                0.0, 0.5, 0.0,
+                0.0, 0.0, 0.5,
+                0.5, Math.sqrt(3)/6, Math.sqrt(6)/3,
+                [1.0, 1.0, 0.0] // Yellow
+            )
+        ];
+        shapeScale(tetraTransforms, 2.0);
+        shapeTranslate(tetraTransforms, -1.0, -0.616, -0.5);
+
+        const cubeTransforms = [
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                1.0, 1.0, 1.0,
+                                [0.0, 0.0, 0.0]), // Vertex (1, 1, 1), Black
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -1.0, 1.0, 1.0,
+                                [1.0, 0.0, 0.0]), // Vertex (-1, 1, 1), Red
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -1.0, -1.0, 1.0,
+                                [1.0, 1.0, 0.0]), // Vertex (-1, -1, 1), Yellow
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                1.0, -1.0, 1.0,
+                                [0.0, 1.0, 0.0]), // Vertex (1, -1, 1), Green
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                1.0, 1.0, -1.0,
+                                [0.0, 0.0, 1.0]), // Vertex (1, 1, -1), Blue
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -1.0, 1.0, -1.0,
+                                [1.0, 0.0, 1.0]), // Vertex (-1, 1, -1), Magenta
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -1.0, -1.0, -1.0,
+                                [1.0, 1.0, 1.0]), // Vertex (-1, -1, -1), White
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                1.0, -1.0, -1.0,
+                                [0.0, 1.0, 1.0]) // Vertex (1, -1, -1), Cyan
+        ];
+        shapeScale(cubeTransforms, 0.5);
+
+        const octaTransforms = [
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                1.0, 0.0, 0.0,
+                                [1.0, 0.0, 0.0]), // Red
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -1.0, 0.0, 0.0,
+                                [0.0, 1.0, 1.0]), // Vertex (-1, 0, 0), Cyan
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.0, 1.0, 0.0,
+                                [0.0, 1.0, 0.0]), // Vertex (0, 1, 0), Green
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.0, -1.0, 0.0,
+                                [1.0, 0.0, 1.0]), // Vertex (0, -1, 0), Magenta
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.0, 0.0, 1.0,
+                                [0.0, 0.0, 1.0]), // Vertex (0, 0, 1), Blue
+            
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.0, 0.0, -1.0,
+                                [1.0, 1.0, 0.0]) // Vertex (0, 0, -1), Yellow
+        ];
+
+        const lineTransforms = [
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.5, 0.0, 0.0,
+                                [1.0, 0.0, 0.0]), // Red
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -0.5, 0.0, 0.0,
+                                [0.0, 1.0, 1.0]), // Cyan
+        ];
+        shapeScale(lineTransforms, 2.0);
+
+        const goldenTransforms = [
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.5, 0.0, 0.0,
+                                [1.0, 0.0, 0.0]), // Red
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -0.5, 0.0, 0.0,
+                                [0.0, 0.0, 1.0]), // Blue
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                phi, 0.0, 0.0,
+                                [1.0, 1.0, 0.0]), // Gold
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                -phi, 0.0, 0.0,
+                                [1.0, 1.0, 0.0]), // Gold
+        ];
+
+        const triTransforms = [
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.0, 0.0, 0.0,
+                                [1.0, 0.0, 0.0]), // Red
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                1.0, 0.0, 0.0,
+                                [0.0, 1.0, 0.0]), // Green
+            new AffineTransform(0.5, 0.0, 0.0, 
+                                0.0, 0.5, 0.0, 
+                                0.0, 0.0, 0.5, 
+                                0.5, 0.866, 0.0,
+                                [0.0, 0.0, 1.0]), // Blue
+        ];
+        //shapeScale(triTransforms, 2.0);
+        shapeTranslate(triTransforms, -0.5, -0.5, 0.0);
+
+        // 2D Hexagon Transformations
+        const hexagonTransforms = [
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                1.0, 0.0, 0.0, // Translation towards (1, 0, 0)
+                [1.0, 0.5, 0.0] // Orange
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                0.5, Math.sqrt(3)/2, 0.0, // Translation towards (0.5, √3/2, 0)
+                [0.5, 1.0, 0.0] // Yellow
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                -0.5, Math.sqrt(3)/2, 0.0, // Translation towards (-0.5, √3/2, 0)
+                [0.0, 1.0, 0.5] // Light Green
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                -1.0, 0.0, 0.0, // Translation towards (-1, 0, 0)
+                [0.0, 0.5, 1.0] // Light Blue
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                -0.5, -Math.sqrt(3)/2, 0.0, // Translation towards (-0.5, -√3/2, 0)
+                [0.5, 0.0, 1.0] // Purple
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                0.5, -Math.sqrt(3)/2, 0.0, // Translation towards (0.5, -√3/2, 0)
+                [1.0, 0.0, 0.5] // Pink
+            ),
+        ];
+
+        // 2D Hexagon Transformations
+        const polyTransforms = [
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                0.0, 0.0, 0.0, 
+                [1.0, 1.0, 0.0] // White
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                0.0, phi, 0.0, 
+                [0.0, 0.0, 1.0] // Blue
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                -0.5, 1.0, 0.0, // Translation towards (1, 0, 0)
+                [1.0, 0.0, 1/phi] // Magenta
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                0.5, 1.0, 0.0, // Translation towards (1, 0, 0)
+                [1.0, 0.0, 1/phi] // Magenta
+            ),
+            new AffineTransform(
+                0.5, 0.0, 0.0, 
+                0.0, 0.5, 0.0, 
+                0.0, 0.0, 0.5, 
+                0.0, 1.0, 0.0, // Translation towards (1, 0, 0)
+                [0.0, 1/phi, 1.0] // Cyan
+            ),
+        ];
+        shapeTranslate(polyTransforms, 0.0, -phi/2, 0.0);
+
+        // Icosahedron Vertex Coordinates (Normalized)
+        const icosahedronVertices = [
+            normalize(0, 1, phi),
+            normalize(0, -1, phi),
+            normalize(0, 1, -phi),
+            normalize(0, -1, -phi),
+            
+            normalize(1, phi, 0),
+            normalize(-1, phi, 0),
+            normalize(1, -phi, 0),
+            normalize(-1, -phi, 0),
+            
+            normalize(phi, 0, 1),
+            normalize(-phi, 0, 1),
+            normalize(phi, 0, -1),
+            normalize(-phi, 0, -1)
+        ];
+
+        // Assign distinct colors for each vertex
+        const icosahedronColors = [
+            [1.0, 0.0, 0.0], // Red
+            [0.0, 1.0, 0.0], // Green
+            [0.0, 0.0, 1.0], // Blue
+            [1.0, 1.0, 0.0], // Yellow
+            [1.0, 0.0, 1.0], // Magenta
+            [0.0, 1.0, 1.0], // Cyan
+            [0.5, 0.5, 0.5], // Gray
+            [1.0, 0.5, 0.0], // Orange
+            [0.5, 0.0, 0.5], // Purple
+            [0.5, 1.0, 0.5], // Light Green
+            [0.5, 0.5, 1.0], // Light Blue
+            [1.0, 0.0, 0.5]  // Pink
+        ];
+
+        // Create Icosahedron Transformations
+        const icosahedronTransforms = icosahedronVertices.map((vertex, index) => {
+            return new AffineTransform(
+                0.5, 0.0, 0.0,  // Scaling and rotation (identity in this case)
+                0.0, 0.5, 0.0,
+                0.0, 0.0, 0.5,
+                vertex.x, vertex.y, vertex.z, // Translation to vertex position
+                icosahedronColors[index]       // Assigned color
+            );
+        });
+
+        // Set transform to be used
+        const transforms = lineTransforms;
+
+        // Initialize Particle System
+        const particleSystem = new ParticleSystem(maxParticles, transforms);
+
+        // Variables for Rotation
+        let rotationX = 0;
+        let rotationY = 0;
+        let dragging = false;
+        let lastX, lastY;
+
+        // Mouse Events
+        canvas.addEventListener('mousedown', function(e) {
+            dragging = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+
+        canvas.addEventListener('mouseup', function(e) {
+            dragging = false;
+        });
+
+        canvas.addEventListener('mouseleave', function(e) {
+            dragging = false;
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            if (dragging) {
+                const deltaX = e.clientX - lastX;
+                const deltaY = e.clientY - lastY;
+                rotationY += deltaX * 0.01;
+                rotationX += deltaY * 0.01;
+                lastX = e.clientX;
+                lastY = e.clientY;
+            }
+        });
+
+        // Touch Events for Mobile
+        canvas.addEventListener('touchstart', function(e) {
+            if (e.touches.length === 1) { // Single touch
+                dragging = true;
+                lastX = e.touches[0].clientX;
+                lastY = e.touches[0].clientY;
+            }
+        }, {passive: false});
+
+        canvas.addEventListener('touchmove', function(e) {
+            if (dragging && e.touches.length === 1) {
+                e.preventDefault(); // Prevent scrolling
+                const touch = e.touches[0];
+                const deltaX = touch.clientX - lastX;
+                const deltaY = touch.clientY - lastY;
+                rotationY += deltaX * 0.01;
+                rotationX += deltaY * 0.01;
+                lastX = touch.clientX;
+                lastY = touch.clientY;
+            }
+        }, {passive: false});
+
+        canvas.addEventListener('touchend', function(e) {
+            dragging = false;
+        });
+
+        // Resize Handler
+        window.addEventListener('resize', function() {
+            resizeCanvas();
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            aspect = canvas.width / canvas.height;
+            projectionMatrix = perspective(fov, aspect, near, far);
+            gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+        });
+
+        // Add Event Listener for Keyboard Inputs
+        window.addEventListener('keydown', function(e) {
+            switch(e.key) {
+                case '1':
+                    particleSystem.transforms = lineTransforms;
+                    console.log('Switched to Line Transforms');
+                    break;
+                case '2':
+                    particleSystem.transforms = hexagonTransforms;
+                    console.log('Switched to Hexagon Transforms');
+                    break;
+                case '3':
+                    particleSystem.transforms = tetraTransforms;
+                    console.log('Switched to Tetrahedron Transforms');
+                    break;
+                case '4':
+                    particleSystem.transforms = octaTransforms;
+                    console.log('Switched to Octahedron');
+                    break;
+                case '5':
+                    particleSystem.transforms = cubeTransforms;
+                    console.log('Switched to Cube Transforms');
+                    break;
+                case '6':
+                    particleSystem.transforms = triTransforms;
+                    console.log('Switched to Triangle Transforms');
+                    break;
+                case '7':
+                    particleSystem.transforms = icosahedronTransforms;
+                    console.log('Switched to Icosahedron Transforms');
+                    break;
+                case '8':
+                    particleSystem.transforms = goldenTransforms;
+                    console.log('Switched to Golden Transforms');
+                    break;
+                case '9':
+                    particleSystem.transforms = polyTransforms;
+                    console.log('Switched to Irregular 2D polygon Transforms');
+                    break;
+                case '+':
+                case '=': // Some keyboards use '=' for '+'
+                    particleSystem.p *= 10;
+                    console.log('Velocity: ' + particleSystem.p);
+                    break;
+                case '-':
+                    particleSystem.p /= 10;
+                    console.log('Velocity: ' + particleSystem.p);
+                    break;
+                case '*':
+                case '8': // '*' is usually shift+8
+                    particleSize *= 1.5;
+                    if (particleSize > 20.0) particleSize = 1.5;
+                    gl.uniform1f(uPointSize, particleSize);
+                    console.log('Particle Size: ' + particleSize);
+                    break;
+                case 'm':
+                case 'M':
+                    particleSystem.audioMixMode += 1;
+                    if (particleSystem.audioMixMode > 2) particleSystem.audioMixMode = 0;
+                    console.log('Audio Mix Mode: ' + particleSystem.audioMixMode);
+                    break;
+                case ' ':
+                    particleSystem.paused = !particleSystem.paused;
+                    console.log('Paused: ' + particleSystem.paused);
+                    break;
+                default:
+                    break;
+            }
+        });
+
+        // Menu Button Click
+        menuButton.addEventListener('click', function() {
+            const isOpen = menu.classList.contains('open');
+            menu.classList.toggle('open');
+            menu.setAttribute('aria-hidden', isOpen ? 'true' : 'false');
+        });
+
+        // Accessibility: Allow menu button to be toggled via keyboard (Enter/Space)
+        menuButton.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                menuButton.click();
+            }
+        });
+
+        // Menu Buttons Click Events
+        menuButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const transformType = button.getAttribute('data-transform');
+                switch(transformType) {
+                    case 'line':
+                        particleSystem.transforms = lineTransforms;
+                        console.log('Switched to Line Transforms');
+                        break;
+                    case 'hexagon':
+                        particleSystem.transforms = hexagonTransforms;
+                        console.log('Switched to Hexagon Transforms');
+                        break;
+                    case 'tetra':
+                        particleSystem.transforms = tetraTransforms;
+                        console.log('Switched to Tetrahedron Transforms');
+                        break;
+                    case 'octa':
+                        particleSystem.transforms = octaTransforms;
+                        console.log('Switched to Octahedron');
+                        break;
+                    case 'cube':
+                        particleSystem.transforms = cubeTransforms;
+                        console.log('Switched to Cube Transforms');
+                        break;
+                    case 'tri':
+                        particleSystem.transforms = triTransforms;
+                        console.log('Switched to Triangle Transforms');
+                        break;
+                    case 'icosahedron':
+                        particleSystem.transforms = icosahedronTransforms;
+                        console.log('Switched to Icosahedron Transforms');
+                        break;
+                    case 'golden':
+                        particleSystem.transforms = goldenTransforms;
+                        console.log('Switched to Golden Transforms');
+                        break;
+                    case 'poly':
+                        particleSystem.transforms = polyTransforms;
+                        console.log('Switched to Irregular 2D polygon Transforms');
+                        break;
+                    default:
+                        break;
+                }
+                // Close menu after selection
+                menu.classList.remove('open');
+                menu.setAttribute('aria-hidden', 'true');
+            });
+        });
+
+        // Velocity Control Buttons
+        increaseVelocityBtn.addEventListener('click', function() {
+            particleSystem.p *= 10;
+            console.log('Velocity: ' + particleSystem.p);
+        });
+        decreaseVelocityBtn.addEventListener('click', function() {
+            particleSystem.p /= 10;
+            console.log('Velocity: ' + particleSystem.p);
+        });
+
+        // Particle Size Button
+        changeParticleSizeBtn.addEventListener('click', function() {
+            particleSize *= 1.5;
+            if (particleSize > 20.0) particleSize = 1.5;
+            gl.uniform1f(uPointSize, particleSize);
+            console.log('Particle Size: ' + particleSize);
+        });
+
+        // Audio Mix Mode Button
+        toggleAudioMixModeBtn.addEventListener('click', function() {
+            particleSystem.audioMixMode += 1;
+            if (particleSystem.audioMixMode > 2) particleSystem.audioMixMode = 0;
+            console.log('Audio Mix Mode: ' + particleSystem.audioMixMode);
+        });
+
+        // Pause/Resume Button
+        togglePauseBtn.addEventListener('click', function() {
+            particleSystem.paused = !particleSystem.paused;
+            console.log('Paused: ' + particleSystem.paused);
+        });
+
+        // Audio Variables
+        let audioContext;
+        let analyser;
+        let frequencyData;
+        let frequencyBands = []; // Array to hold frequency band definitions
+        let audioMatrix = new Float32Array(9); // Array to hold audio influence per band
+        let gain = 1.0; // Overall audio gain
+
+        // Define Frequency Bands (Logarithmically Spaced)
+        function defineFrequencyBands(sampleRate, fftSize) {
+            const f_min = 40;
+            const f_max = 20000;
+            const numBands = 9;
+            const ratio = Math.pow(f_max / f_min, 1 / numBands);
+            const frequencyBands = [];
+            for(let i = 0; i < numBands; i++) {
+                const low = f_min * Math.pow(ratio, i);
+                const high = f_min * Math.pow(ratio, i + 1);
+                const startBin = Math.floor(low / (sampleRate / fftSize));
+                const endBin = Math.floor(high / (sampleRate / fftSize));
+                frequencyBands.push({start: startBin, end: endBin});
+            }
+            return frequencyBands;
+        }
+
+        // Start Audio Function
+        function startAudio() {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(function(stream) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const source = audioContext.createMediaStreamSource(stream);
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 2048; // Higher fftSize for better frequency resolution
+                    const bufferLength = analyser.frequencyBinCount;
+                    frequencyData = new Uint8Array(bufferLength);
+                    source.connect(analyser);
+                    console.log('Audio started');
+
+                    // Define frequency bands based on sample rate and fft size
+                    frequencyBands = defineFrequencyBands(audioContext.sampleRate, analyser.fftSize);
+                    console.log('Frequency bands defined:', frequencyBands);
+                })
+                .catch(function(err) {
+                    console.error('The following gUM error occurred: ' + err);
+                    alert('Could not access audio input.');
+                });
+        }
+
+        // Add Event Listener to Start Audio Button
+        startAudioButton.addEventListener('click', function() {
+            startAudio();
+            startAudioButton.disabled = true; // Disable button after starting audio
+        });
+
+        // Ensure Start Audio Button is focusable on mobile
+        startAudioButton.setAttribute('tabindex', '0');
+
+        // Animation Loop
+        function render() {
+            // Compute Audio Gain and Audio Matrix
+            if (analyser) {
+                analyser.getByteFrequencyData(frequencyData);
+                
+                // Compute overall gain using RMS of frequency data
+                let sumSquares = 0.0;
+                for (let i = 0; i < frequencyData.length; i++) {
+                    const normalized = (frequencyData[i] - 128) / 128.0; // Normalize between -1 and 1
+                    sumSquares += normalized * normalized;
+                }
+                gain = Math.sqrt(sumSquares / frequencyData.length); // RMS
+
+                // Compute audioMatrix based on frequency bands
+                for(let i = 0; i < 9; i++) {
+                    const band = frequencyBands[i];
+                    if (!band) {
+                        audioMatrix[i] = 0;
+                        continue;
+                    }
+                    let sum = 0;
+                    let count = 0;
+                    for(let j = band.start; j <= band.end && j < frequencyData.length; j++) {
+                        sum += frequencyData[j];
+                        count++;
+                    }
+                    const average = count > 0 ? sum / count : 0;
+                    audioMatrix[i] = average / 255.0; // Normalize to [0,1]
+                }
+
+                // Optional: You can visualize the audioMatrix values or log them
+                // console.log('Audio Matrix:', audioMatrix);
+            }
+
+            // Iterate Particle System with audioMatrix and gain
+            particleSystem.iterate(audioMatrix, gain);
+
+            // Update Position Buffer Data
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, particleSystem.positions);
+
+            // Update Color Buffer Data
+            gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, particleSystem.colors);
+
+            // Clear Canvas
+            gl.clearColor(0.0, 0.0, 0.0, 1.0); // Black background
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+
+            // Update ModelView Matrix with Rotation
+            let mvMatrix = identity();
+            mvMatrix = multiply(mvMatrix, rotateX(rotationX));
+            mvMatrix = multiply(mvMatrix, rotateY(rotationY));
+            mvMatrix = multiply(mvMatrix, translate(0, 0, -5)); // Move back to see the fractal
+            gl.uniformMatrix4fv(uModelViewMatrix, false, mvMatrix);
+
+            // Draw Particles
+            gl.drawArrays(gl.POINTS, 0, particleSystem.maxParticles);
+
+            requestAnimationFrame(render);
+        }
+
+        requestAnimationFrame(render);
+    };
+    </script>
+</body>
+</html>
