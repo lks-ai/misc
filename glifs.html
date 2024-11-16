@@ -1,5 +1,5 @@
 <!-- By Nathaniel Dwight Gibson : Reddit:@enspiralart X:@softmaestro YT:@natecodesai 
-    Published on: https://github.com/lks-ai LK Studio
+    Published on: https://github.com/lks-ai Copyright 2024 LK Studio. All Rights Reserved.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -377,6 +377,9 @@
         apply(point, iteration_coefficient, audioMatrix, gain, audioMixMode, globalPrecision = -1) {
             // Combine the original matrix with the dynamic grid scaled by gain and audioMatrix
             const combinedMatrix = new Float32Array(9);
+            // Spherical matrix for sphere mode
+            const theta = iteration_coefficient * 2.0 * Math.PI;
+            const sphereMatrix = new Float32Array([Math.cos(theta), Math.sin(theta), Math.cos(theta), Math.sin(theta), Math.cos(theta), 0, Math.cos(theta), Math.sin(theta), 1]);
             for (let i = 0; i < 9; i++) {
                 if (audioMixMode == 0){
                     combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * 0.4 * gain) + (audioMatrix[i] * -0.8);
@@ -387,6 +390,9 @@
                     combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * audioMatrix[i] * (cpart * Math.PI * 0.5));
                 } else if (audioMixMode == 3){
                     combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * audioMatrix[i] * (iteration_coefficient + 0.5));
+                } else if (audioMixMode == 4){
+                    const cpart = sphereMatrix[i];
+                    combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * audioMatrix[i] * (cpart * Math.PI));
                 }
             }
 
@@ -1094,7 +1100,7 @@
                 case 'm':
                 case 'M':
                     particleSystem.audioMixMode += 1;
-                    if (particleSystem.audioMixMode > 3) particleSystem.audioMixMode = 0;
+                    if (particleSystem.audioMixMode > 4) particleSystem.audioMixMode = 0;
                     console.log('Audio Mix Mode: ' + particleSystem.audioMixMode);
                     break;
                 case ' ':
@@ -1192,7 +1198,7 @@
         // Audio Mix Mode Button
         toggleAudioMixModeBtn.addEventListener('click', function() {
             particleSystem.audioMixMode += 1;
-            if (particleSystem.audioMixMode > 3) particleSystem.audioMixMode = 0;
+            if (particleSystem.audioMixMode > 4) particleSystem.audioMixMode = 0;
             console.log('Audio Mix Mode: ' + particleSystem.audioMixMode);
         });
 
