@@ -5,7 +5,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>3D Fractal Particle System with WebGL and Advanced Audio Reactivity</title>
+    <title>Morphon: Audio Reactive 3D Fractal Particle System</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { 
@@ -275,13 +275,10 @@
             this.ty = ty;
             this.tz = tz;
 
-            // Initialize dynamic transformation grid and velocity
+            // Initialize morph transforms and velocity
+
             this.caGrid = new Float32Array(9);
             this.caVel = new Float32Array(9);
-            for (let i = 0; i < 9; i++) {
-                this.caGrid[i] = 0.0;
-                this.caVel[i] = 0.0;
-            }
 
             // Color associated with this transform
             this.color = color; // [r, g, b]
@@ -295,6 +292,13 @@
             // CA Parameters
             this.sepAvg = false;
             this.neighborhood = [[-1, 0],[0,-1],[1,0],[0,1]];
+        }
+
+        resetCA(){
+            for (let i = 0; i < 9; i++) {
+                this.caGrid[i] = 0.0;
+                this.caVel[i] = 0.0;
+            }            
         }
 
         updateParams(p, m, q, s) {
@@ -380,6 +384,9 @@
             // Spherical matrix for sphere mode
             const theta = iteration_coefficient * 2.0 * Math.PI;
             const sphereMatrix = new Float32Array([Math.cos(theta), Math.sin(theta), Math.cos(theta), Math.sin(theta), Math.cos(theta), 0, Math.cos(theta), Math.sin(theta), 1]);
+            const sphereMatrix2 = new Float32Array([Math.cos(theta), Math.sin(theta), Math.cos(theta), 
+                                                    Math.sin(theta), Math.cos(theta), Math.cos(theta), 
+                                                    Math.cos(theta), Math.cos(theta), Math.cos(theta)]);
             for (let i = 0; i < 9; i++) {
                 if (audioMixMode == 0){
                     combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * 0.4 * gain) + (audioMatrix[i] * -0.8);
@@ -393,6 +400,10 @@
                 } else if (audioMixMode == 4){
                     const cpart = sphereMatrix[i];
                     combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * audioMatrix[i] * cpart * 1.618);
+                } else if (audioMixMode == 5){
+                    const cpart = sphereMatrix2[i];
+                    const invert = iteration_coefficient > 0.1 ? -1.0: 1.0;
+                    combinedMatrix[i] = this.originalMatrix[i] + (this.caGrid[i] * cpart * 0.5) + (audioMatrix[i] * sphereMatrix2[i] * (1 - iteration_coefficient));
                 }
             }
 
@@ -594,7 +605,7 @@
         const uPointSize = gl.getUniformLocation(program, "uPointSize");
 
         // Changed maxparticles to be used in later calcs
-        const maxParticles = 10000; // Adjust as needed
+        const maxParticles = 20000; // Adjust as needed
         let particleSize = 3.0;
 
         // Create Buffer for Particle Positions
@@ -1100,7 +1111,7 @@
                 case 'm':
                 case 'M':
                     particleSystem.audioMixMode += 1;
-                    if (particleSystem.audioMixMode > 4) particleSystem.audioMixMode = 0;
+                    if (particleSystem.audioMixMode > 5) particleSystem.audioMixMode = 0;
                     console.log('Audio Mix Mode: ' + particleSystem.audioMixMode);
                     break;
                 case ' ':
@@ -1198,7 +1209,7 @@
         // Audio Mix Mode Button
         toggleAudioMixModeBtn.addEventListener('click', function() {
             particleSystem.audioMixMode += 1;
-            if (particleSystem.audioMixMode > 4) particleSystem.audioMixMode = 0;
+            if (particleSystem.audioMixMode > 5) particleSystem.audioMixMode = 0;
             console.log('Audio Mix Mode: ' + particleSystem.audioMixMode);
         });
 
